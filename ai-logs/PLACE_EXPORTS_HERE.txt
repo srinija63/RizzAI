@@ -1,0 +1,10 @@
+Put your exported AI chat logs in this folder.
+
+Cursor steps:
+Chat panel → "..." → Export conversation → save into:
+`RizzAI/ai-logs/`
+
+Example filenames:
+- cursor-chat-2026-05-04.txt
+- cursor-chat-2026-05-04-2.txt
+

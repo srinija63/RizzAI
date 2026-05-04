@@ -1,0 +1,15 @@
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Local vector database / generated retrieval index
+backend/chroma_db/
+
+# Python virtual environments
+backend/.venv/
+
+# Node modules
+frontend/node_modules/
+
+# Local env files
+backend/.env

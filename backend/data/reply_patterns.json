@@ -1,0 +1,473 @@
+[
+  {
+    "id": "rp001",
+    "situation": "They said your joke was terrible.",
+    "tone": "funny",
+    "pattern": "Self-aware humor and bounce back lightly.",
+    "example_reply": "Fair, I peaked too early. Give me one redemption joke?",
+    "safety_note": "Keep it playful without insulting them."
+  },
+  {
+    "id": "rp002",
+    "situation": "They replied with only 'lol'.",
+    "tone": "funny",
+    "pattern": "Tease the short reply in a light way.",
+    "example_reply": "A full 'lol'? Big emotional investment, I respect it.",
+    "safety_note": "Do not shame or pressure for longer replies."
+  },
+  {
+    "id": "rp003",
+    "situation": "They are late to answer.",
+    "tone": "funny",
+    "pattern": "Joke about timing while staying relaxed.",
+    "example_reply": "You reply on mystery mode and somehow it works.",
+    "safety_note": "Avoid guilt-tripping about response time."
+  },
+  {
+    "id": "rp004",
+    "situation": "They mention they love coffee.",
+    "tone": "funny",
+    "pattern": "Use grounded humor and invite a real preference.",
+    "example_reply": "Coffee loyalty is serious. What is your go-to order?",
+    "safety_note": "Keep humor friendly and not dismissive."
+  },
+  {
+    "id": "rp005",
+    "situation": "They ask what you do for fun.",
+    "tone": "funny",
+    "pattern": "Share hobby with a witty twist.",
+    "example_reply": "I cook, travel, and occasionally pretend I can dance.",
+    "safety_note": "Do not fabricate extreme achievements."
+  },
+  {
+    "id": "rp006",
+    "situation": "They say your profile is interesting.",
+    "tone": "funny",
+    "pattern": "Thank them and move the conversation forward naturally.",
+    "example_reply": "Appreciate that. What part stood out to you most?",
+    "safety_note": "Stay genuine and avoid performative lines."
+  },
+  {
+    "id": "rp007",
+    "situation": "They sent a random meme.",
+    "tone": "funny",
+    "pattern": "React enthusiastically and continue conversation.",
+    "example_reply": "This meme is elite. Do you curate these professionally?",
+    "safety_note": "Avoid mocking sensitive content."
+  },
+  {
+    "id": "rp008",
+    "situation": "They said hi after matching.",
+    "tone": "flirty",
+    "pattern": "Warm opener with an easy conversation hook.",
+    "example_reply": "Hey, good to meet you. How is your day going so far?",
+    "safety_note": "Keep it friendly and low pressure."
+  },
+  {
+    "id": "rp009",
+    "situation": "They complimented your smile.",
+    "tone": "flirty",
+    "pattern": "Accept compliment and return soft flirt.",
+    "example_reply": "Now I am smiling more, so that is on you.",
+    "safety_note": "Avoid sexual escalation."
+  },
+  {
+    "id": "rp010",
+    "situation": "They ask if you are always this smooth.",
+    "tone": "flirty",
+    "pattern": "Confident but humble flirty reply.",
+    "example_reply": "Only when the conversation gives me good material.",
+    "safety_note": "Avoid arrogance or put-downs."
+  },
+  {
+    "id": "rp011",
+    "situation": "They said you seem cute.",
+    "tone": "flirty",
+    "pattern": "Accept the compliment and ask a playful follow-up.",
+    "example_reply": "That is sweet of you. What gave it away?",
+    "safety_note": "Avoid fishing for more compliments."
+  },
+  {
+    "id": "rp012",
+    "situation": "They ask what kind of dates you like.",
+    "tone": "flirty",
+    "pattern": "Suggest simple date idea with charm.",
+    "example_reply": "Good coffee, easy laughs, and a little friendly chaos.",
+    "safety_note": "Keep expectations respectful and realistic."
+  },
+  {
+    "id": "rp013",
+    "situation": "They tease you for replying fast.",
+    "tone": "flirty",
+    "pattern": "Play along and keep momentum.",
+    "example_reply": "I call it enthusiasm, not speed.",
+    "safety_note": "Avoid controlling language."
+  },
+  {
+    "id": "rp014",
+    "situation": "They ask if you are free this weekend.",
+    "tone": "flirty",
+    "pattern": "Show interest and suggest a simple, respectful plan.",
+    "example_reply": "I might be. Want to keep it easy with coffee or a walk?",
+    "safety_note": "Offer choices and respect their comfort."
+  },
+  {
+    "id": "rp015",
+    "situation": "They ask what you are looking for.",
+    "tone": "confident",
+    "pattern": "State intentions clearly and calmly.",
+    "example_reply": "A real connection, good communication, and shared effort.",
+    "safety_note": "Be honest; avoid love-bombing."
+  },
+  {
+    "id": "rp016",
+    "situation": "They challenge you to pick a first date.",
+    "tone": "confident",
+    "pattern": "Lead with a clear plan.",
+    "example_reply": "Coffee walk on Saturday afternoon. Easy and fun.",
+    "safety_note": "Offer options, do not pressure."
+  },
+  {
+    "id": "rp017",
+    "situation": "They ask why they should choose you.",
+    "tone": "confident",
+    "pattern": "Show confidence through values, not bragging.",
+    "example_reply": "I am consistent, easy to talk to, and I make real plans.",
+    "safety_note": "Avoid ranking yourself against others."
+  },
+  {
+    "id": "rp018",
+    "situation": "They say you are hard to read.",
+    "tone": "confident",
+    "pattern": "Clarify yourself directly.",
+    "example_reply": "Fair point. I am interested, just not into forced vibes.",
+    "safety_note": "Stay direct, not defensive."
+  },
+  {
+    "id": "rp019",
+    "situation": "They ask if you are serious about dating.",
+    "tone": "confident",
+    "pattern": "Answer with intent and boundaries.",
+    "example_reply": "Yes. I like taking things step by step but genuinely.",
+    "safety_note": "No false promises."
+  },
+  {
+    "id": "rp020",
+    "situation": "They mention they value communication.",
+    "tone": "confident",
+    "pattern": "Agree and show compatible behavior.",
+    "example_reply": "Same here. Clear communication makes everything easier.",
+    "safety_note": "Avoid controlling rules."
+  },
+  {
+    "id": "rp021",
+    "situation": "They ask if you want to meet soon.",
+    "tone": "confident",
+    "pattern": "Give direct positive response.",
+    "example_reply": "Yes, I am open to that. Want to pick a day?",
+    "safety_note": "Keep consent and comfort central."
+  },
+  {
+    "id": "rp022",
+    "situation": "They keep giving one-word replies.",
+    "tone": "direct",
+    "pattern": "Address mismatch clearly and politely.",
+    "example_reply": "I like real conversation. Want to continue or pause here?",
+    "safety_note": "Do not insult or corner them."
+  },
+  {
+    "id": "rp023",
+    "situation": "They cancel last minute.",
+    "tone": "direct",
+    "pattern": "Acknowledge and reset expectations.",
+    "example_reply": "No worries. If you still want to meet, suggest another time.",
+    "safety_note": "Avoid guilt and pressure."
+  },
+  {
+    "id": "rp024",
+    "situation": "They ask if you are dating multiple people.",
+    "tone": "direct",
+    "pattern": "Be transparent and simple.",
+    "example_reply": "I am talking to people, but I value honesty and clarity.",
+    "safety_note": "No deception."
+  },
+  {
+    "id": "rp025",
+    "situation": "They cross a boundary in chat.",
+    "tone": "direct",
+    "pattern": "Set boundary respectfully.",
+    "example_reply": "I am not comfortable with that. Let us keep it respectful.",
+    "safety_note": "Prioritize safety and consent."
+  },
+  {
+    "id": "rp026",
+    "situation": "They ask for your number immediately.",
+    "tone": "direct",
+    "pattern": "State pace and comfort level.",
+    "example_reply": "I prefer chatting here first, then we can swap numbers.",
+    "safety_note": "Do not share personal info under pressure."
+  },
+  {
+    "id": "rp027",
+    "situation": "They ghost then return days later.",
+    "tone": "direct",
+    "pattern": "Be polite but clear about consistency.",
+    "example_reply": "Welcome back. I am open to talking if we keep it consistent.",
+    "safety_note": "Avoid hostility or manipulation."
+  },
+  {
+    "id": "rp028",
+    "situation": "They ask if you want casual or serious.",
+    "tone": "direct",
+    "pattern": "Answer plainly with no mixed signals.",
+    "example_reply": "I am open to serious if the connection is right.",
+    "safety_note": "Be truthful and respectful."
+  },
+  {
+    "id": "rp029",
+    "situation": "They had a stressful day.",
+    "tone": "sweet",
+    "pattern": "Offer gentle support and presence.",
+    "example_reply": "That sounds heavy. I hope tonight feels a little softer for you.",
+    "safety_note": "Avoid overstepping emotional boundaries."
+  },
+  {
+    "id": "rp030",
+    "situation": "They share they are feeling nervous about dating.",
+    "tone": "sweet",
+    "pattern": "Reassure with patience.",
+    "example_reply": "That is completely okay. We can keep this easy and honest.",
+    "safety_note": "Do not pressure for commitment."
+  },
+  {
+    "id": "rp031",
+    "situation": "They mention they love animals.",
+    "tone": "sweet",
+    "pattern": "Connect through warmth and curiosity.",
+    "example_reply": "Instant green flag. Tell me your best pet story.",
+    "safety_note": "Keep it respectful and friendly."
+  },
+  {
+    "id": "rp032",
+    "situation": "They apologize for a late reply.",
+    "tone": "sweet",
+    "pattern": "Accept kindly and reduce pressure.",
+    "example_reply": "You are good, no stress. I am happy to hear from you.",
+    "safety_note": "Avoid passive-aggressive tone."
+  },
+  {
+    "id": "rp033",
+    "situation": "They say they are shy.",
+    "tone": "sweet",
+    "pattern": "Create comfort and pace.",
+    "example_reply": "No rush at all. We can take this one message at a time.",
+    "safety_note": "Respect their pace."
+  },
+  {
+    "id": "rp034",
+    "situation": "They share a personal goal.",
+    "tone": "sweet",
+    "pattern": "Encourage sincerely.",
+    "example_reply": "I love that for you. I am rooting for it.",
+    "safety_note": "Keep encouragement authentic."
+  },
+  {
+    "id": "rp035",
+    "situation": "They send a good morning text.",
+    "tone": "sweet",
+    "pattern": "Return warmth in a short way.",
+    "example_reply": "Good morning, that message made my day start better.",
+    "safety_note": "Keep it light and respectful."
+  },
+  {
+    "id": "rp036",
+    "situation": "They ask two truths and a lie.",
+    "tone": "playful",
+    "pattern": "Play along with a fun game while staying believable.",
+    "example_reply": "Two truths and a lie: I can cook, I once ran a 5K, I hate music. Your guess?",
+    "safety_note": "Use harmless facts and avoid deceptive claims."
+  },
+  {
+    "id": "rp037",
+    "situation": "They ask for your most random talent.",
+    "tone": "playful",
+    "pattern": "Share quirky detail and ask back.",
+    "example_reply": "I can guess songs in two seconds. Your turn.",
+    "safety_note": "Keep it honest and light."
+  },
+  {
+    "id": "rp038",
+    "situation": "They ask tea or coffee.",
+    "tone": "playful",
+    "pattern": "Answer clearly and keep it conversational.",
+    "example_reply": "Coffee for me. Are you team coffee or tea?",
+    "safety_note": "Avoid sounding judgmental or try-hard."
+  },
+  {
+    "id": "rp039",
+    "situation": "They ask for a hot take.",
+    "tone": "playful",
+    "pattern": "Use harmless opinion to keep chat fun.",
+    "example_reply": "My hot take: fries are better when stolen from someone else.",
+    "safety_note": "Avoid offensive topics."
+  },
+  {
+    "id": "rp040",
+    "situation": "They ask beach or mountains.",
+    "tone": "playful",
+    "pattern": "Answer and build future conversation.",
+    "example_reply": "Mountains for calm, beach for chaos. Depends on the mood.",
+    "safety_note": "Keep tone easy and respectful."
+  },
+  {
+    "id": "rp041",
+    "situation": "They ask your ideal weekend.",
+    "tone": "playful",
+    "pattern": "Share simple plan with personality.",
+    "example_reply": "Brunch, a walk, and pretending I am great at mini golf.",
+    "safety_note": "Avoid unrealistic love-bombing."
+  },
+  {
+    "id": "rp042",
+    "situation": "They challenge you to ask a better question.",
+    "tone": "playful",
+    "pattern": "Respond with creative prompt.",
+    "example_reply": "Deal. What is one small thing that always makes your day better?",
+    "safety_note": "Keep questions non-invasive.",
+    "intent": "conversation_builder",
+    "stage": "early_chat",
+    "difficulty": "easy"
+  },
+  {
+    "id": "rp043",
+    "situation": "They replied only 'ok' after your message.",
+    "tone": "funny",
+    "pattern": "Use a soft joke to restart momentum.",
+    "example_reply": "An 'ok' that powerful deserves a sequel. What happened next?",
+    "safety_note": "Do not mock or pressure them.",
+    "intent": "dry_reply_recovery",
+    "stage": "early_chat",
+    "difficulty": "medium"
+  },
+  {
+    "id": "rp044",
+    "situation": "They sent 'lol' with no follow-up.",
+    "tone": "funny",
+    "pattern": "Playfully acknowledge and invite detail.",
+    "example_reply": "I will take that lol as a partial win. Tell me your real verdict.",
+    "safety_note": "Keep it light and respectful.",
+    "intent": "dry_reply_recovery",
+    "stage": "early_chat",
+    "difficulty": "easy"
+  },
+  {
+    "id": "rp045",
+    "situation": "They answered 'haha maybe' when you suggested a plan.",
+    "tone": "flirty",
+    "pattern": "Respond to uncertainty with calm flirt and no pressure.",
+    "example_reply": "Haha maybe works for me. If you are up for it, we can keep it simple this weekend.",
+    "safety_note": "Do not push after uncertain responses.",
+    "intent": "dry_reply_recovery",
+    "stage": "mid_chat",
+    "difficulty": "medium"
+  },
+  {
+    "id": "rp046",
+    "situation": "They sent 'hmm' to your question.",
+    "tone": "flirty",
+    "pattern": "Turn hesitation into playful curiosity.",
+    "example_reply": "That hmm sounds interesting. Should I be intrigued or worried?",
+    "safety_note": "Avoid manipulative teasing.",
+    "intent": "dry_reply_recovery",
+    "stage": "mid_chat",
+    "difficulty": "medium"
+  },
+  {
+    "id": "rp047",
+    "situation": "They replied 'idk' about meeting up.",
+    "tone": "confident",
+    "pattern": "Offer clear option and leave room.",
+    "example_reply": "No pressure. If you are open, we can do a short coffee this week.",
+    "safety_note": "Respect uncertainty and boundaries.",
+    "intent": "ask_out",
+    "stage": "mid_chat",
+    "difficulty": "hard"
+  },
+  {
+    "id": "rp048",
+    "situation": "They keep replying with short 'ok' and 'hmm'.",
+    "tone": "confident",
+    "pattern": "Reset the pace with direct clarity.",
+    "example_reply": "I am up for talking, but I like a bit more back-and-forth. You in?",
+    "safety_note": "Do not shame their communication style.",
+    "intent": "dry_reply_recovery",
+    "stage": "mid_chat",
+    "difficulty": "hard"
+  },
+  {
+    "id": "rp049",
+    "situation": "They said 'maybe' again after you asked a question.",
+    "tone": "direct",
+    "pattern": "Ask for clarity in a polite way.",
+    "example_reply": "Totally okay either way. Do you want to keep chatting or pause?",
+    "safety_note": "Avoid ultimatums.",
+    "intent": "clarity_check",
+    "stage": "mid_chat",
+    "difficulty": "medium"
+  },
+  {
+    "id": "rp050",
+    "situation": "They replied 'ok lol' with low energy.",
+    "tone": "direct",
+    "pattern": "Acknowledge low-energy replies and reset respectfully.",
+    "example_reply": "No worries, we can pick this up when you are in a better mood to chat.",
+    "safety_note": "Keep tone neutral and avoid guilt-tripping.",
+    "intent": "dry_reply_recovery",
+    "stage": "mid_chat",
+    "difficulty": "hard"
+  },
+  {
+    "id": "rp051",
+    "situation": "They replied with 'hmm ok' after sharing stress.",
+    "tone": "sweet",
+    "pattern": "Respond with care and no pressure.",
+    "example_reply": "All good. We can keep it simple today, no pressure at all.",
+    "safety_note": "Do not guilt them for low energy.",
+    "intent": "emotional_support",
+    "stage": "mid_chat",
+    "difficulty": "medium"
+  },
+  {
+    "id": "rp052",
+    "situation": "They answered 'idk haha' to your topic.",
+    "tone": "sweet",
+    "pattern": "Offer gentle prompt to reopen chat.",
+    "example_reply": "That is fair. Want an easier one: coffee, tea, or chaos?",
+    "safety_note": "Keep it kind and light.",
+    "intent": "dry_reply_recovery",
+    "stage": "early_chat",
+    "difficulty": "easy"
+  },
+  {
+    "id": "rp053",
+    "situation": "They sent just 'ok' after your story.",
+    "tone": "playful",
+    "pattern": "Use playful recovery with a simple question.",
+    "example_reply": "That ok is mysterious. Was it a good ok or dramatic ok?",
+    "safety_note": "Avoid sarcasm that feels rude.",
+    "intent": "dry_reply_recovery",
+    "stage": "early_chat",
+    "difficulty": "easy"
+  },
+  {
+    "id": "rp054",
+    "situation": "They replied 'haha maybe' to meeting this weekend.",
+    "tone": "playful",
+    "pattern": "Keep momentum with low-pressure plan.",
+    "example_reply": "I hear a maybe with potential. Mini coffee mission this weekend?",
+    "safety_note": "Respect consent and timing.",
+    "intent": "ask_out",
+    "stage": "mid_chat",
+    "difficulty": "medium"
+  }
+]

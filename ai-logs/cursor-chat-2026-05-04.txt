@@ -1,0 +1,44 @@
+Cursor Chat Export (manual summary)
+Date: 2026-05-04
+Project: RizzAI
+
+Major progress completed today:
+
+1) Full-stack scaffolding
+- Created frontend (Expo React Native + TypeScript)
+- Created backend (FastAPI) with clean structure:
+  - main.py
+  - routes/
+  - services/
+  - schemas.py
+
+2) RAG pipeline
+- Added dataset: backend/data/reply_patterns.json
+- Added ingestion script: backend/scripts/ingest.py
+- Added retrieval service: backend/services/rag_service.py
+- Added tone-aware reranking and MMR retrieval strategy
+- Added retrieval debug payload support
+
+3) Generation service
+- Implemented RAG-based reply generation in backend/services/rizz_service.py
+- Added structured output (replies + labels)
+- Added safe fallback behavior when model/key is unavailable
+- Added safety guardrails for risky requests
+
+4) Embedding resilience
+- Added local sentence-transformers fallback
+- Added resilient embedding wrapper to auto-fallback when OpenAI key exists but fails
+
+5) Frontend Explainability Mode
+- Added toggle in Chat Input screen
+- Sends retrieval_debug=true to backend when enabled
+- Added collapsible “Why these suggestions?” section in Reply Results
+- Shows pattern_id, tone, situation, score, reason
+
+6) Documentation
+- Updated README with setup, RAG, retrieval debug, and Loom explainability demo flow
+
+Note:
+- This file is a project log artifact. For strict submission requirements, also export raw chat from Cursor:
+  Chat panel -> ... -> Export conversation
+  Save into ai-logs/ as a .txt file.

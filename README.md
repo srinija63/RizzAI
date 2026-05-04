@@ -169,3 +169,4 @@ Expected output: top relevant examples with `id`, `tone`, `situation`, `content`
   `frontend/src/services/api.ts`
 - If `OPENAI_API_KEY` is not set, backend returns demo suggestions so the app still works.
 - For RAG ingestion/retrieval, set `OPENAI_API_KEY` in `backend/.env` (plus optional `OPENAI_BASE_URL` for compatible providers).
+# RizzAI

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,8 @@ from langchain_core.documents import Document
 
 from services.config import settings
 from services.embeddings import get_embeddings
+
+logger = logging.getLogger("rizzai.rag")
 
 TONE_BOOST = 0.35
 KEYWORD_BOOST = 0.15
@@ -184,4 +187,10 @@ def retrieve_patterns(conversation_text: str, tone: str, k: int = 5) -> list[dic
 
     scored = sorted(combined.values(), key=lambda x: x["relevance_score"])
     final_items = _tone_quota_select(scored, selected_tone, k)
-    return _format_results(final_items)
+    results = _format_results(final_items)
+    tone_hits = sum(1 for r in results if r.get("tone", "").lower() == selected_tone)
+    logger.info(
+        "[RAG] retrieved=%d patterns  tone_match=%d/%d  query=%r",
+        len(results), tone_hits, len(results), query[:60],
+    )
+    return results

@@ -1,13 +1,58 @@
 """Generate dating replies using RAG + OpenAI-compatible chat API."""
 
 import json
+import logging
 import re
+from collections import Counter
 from typing import Any
 
-import httpx
-
 from services.config import settings
+from services.llm_service import generate_replies, get_last_provider_name
 from services.rag_service import retrieve_patterns
+
+logger = logging.getLogger("rizzai.rag")
+
+# Long pasted chats: keep recent tail for retrieval and prompts (tokens + stability).
+_MAX_INPUT_CHARS = 4000
+_TRUNC_TAIL_CHARS = 3200
+_MICRO_LEN_CAP = 4  # blanket: one-word-ish cues ("ok", "k", "lol")
+_MICRO_TOKENS = frozenset(
+    {
+        "lol",
+        "lmao",
+        "lmfao",
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "hmm",
+        "hmmm",
+        "hm",
+        "idk",
+        "maybe",
+        "sure",
+        "yeah",
+        "yep",
+        "yup",
+        "nah",
+        "nope",
+        "fine",
+        "nice",
+        "cool",
+        "hey",
+        "yo",
+        "sup",
+        "wtf",
+        "omg",
+    },
+)
+_REPEATED_MIN_LINES = 4
+_REPEATED_MIN_REPEAT_RATIO = 0.75
+_REPEATED_MIN_WORD_REPS = 6  # e.g. "lol lol lol lol lol lol"
+_MAX_REPLY_WORDS = 16
+_SIMILARITY_REWRITE_THRESHOLD = 0.72
+_LOG_INPUT_PREVIEW_CHARS = 400
+_MAX_REPLY_LINES = 2
 
 
 def _is_unsafe_text(text: str) -> bool:
@@ -31,6 +76,444 @@ def _is_unsafe_text(text: str) -> bool:
         "harass",
     ]
     return any(marker in t for marker in blocked_markers)
+
+
+def _normalize_whitespace(text: str) -> str:
+    """Collapse excessive blank lines; keep content readable."""
+    t = (text or "").strip()
+    t = re.sub(r"\n{4,}", "\n\n\n", t)
+    return t
+
+
+def _preview_text(text: str, max_chars: int = _LOG_INPUT_PREVIEW_CHARS) -> str:
+    """Compact input preview for logs."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[:max_chars]}... (truncated)"
+
+
+def _log_rag_event(
+    *,
+    stage: str,
+    conversation_text: str,
+    tone: str,
+    retrieved_ids: list[str] | None = None,
+    replies: list[str] | None = None,
+    note: str | None = None,
+) -> None:
+    """Emit a clean bracketed log line for each pipeline stage."""
+    preview = _preview_text(conversation_text)[:50]
+    if stage == "start":
+        logger.info("[Pipeline] start  tone=%s  input=%r", tone, preview)
+    elif stage.startswith("edge_case"):
+        label = stage.replace("edge_case_", "")
+        logger.info("[Pipeline] edge_case=%s  tone=%s  replies=%d", label, tone, len(replies or []))
+    elif stage == "safety_redirect_input":
+        logger.info("[Pipeline] safety_redirect  tone=%s", tone)
+    elif stage == "retrieved":
+        ids = ", ".join(retrieved_ids or []) or "none"
+        logger.info("[Pipeline] retrieved  ids=[%s]", ids)
+    elif stage == "llm_generated":
+        logger.info("[Pipeline] llm_generated  replies=%d", len(replies or []))
+    elif stage == "final":
+        top = (replies or [""])[0][:50]
+        logger.info(
+            "[Pipeline] done  replies=%d  ids=[%s]  top=%r",
+            len(replies or []),
+            ", ".join(retrieved_ids or []),
+            top,
+        )
+    else:
+        logger.info("[Pipeline] stage=%s  tone=%s", stage, tone)
+
+
+def _is_mostly_repeated_lines(text: str) -> bool:
+    """Detect paste spam / same line many times."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if len(lines) >= _REPEATED_MIN_LINES:
+        top_count = Counter(lines).most_common(1)[0][1]
+        if top_count >= len(lines) * _REPEATED_MIN_REPEAT_RATIO:
+            return True
+    words = text.split()
+    if len(words) >= _REPEATED_MIN_WORD_REPS and len(set(words)) == 1:
+        return True
+    return False
+
+
+def _is_micro_input(text: str) -> bool:
+    """Dry / low-effort single-line cues (not full sentences like 'thank you')."""
+    stripped = text.strip()
+    if not stripped or "\n" in stripped:
+        return False
+    if len(stripped) <= _MICRO_LEN_CAP:
+        return True
+    tokens = stripped.split()
+    if len(tokens) != 1:
+        return False
+    word = re.sub(r"[^\w]+$", "", tokens[0]).lower()
+    return word in _MICRO_TOKENS
+
+
+def _truncate_for_rag_and_llm(text: str) -> tuple[str, str | None]:
+    """
+    If the user pasted a huge chat, keep a recent tail plus small head for context.
+    Returns (possibly_truncated_text, note_or_none).
+    """
+    if len(text) <= _MAX_INPUT_CHARS:
+        return text, None
+    head = text[:500]
+    tail = text[-_TRUNC_TAIL_CHARS:]
+    note = (
+        f"Long chat trimmed ({len(text)} characters). "
+        "Suggestions focus on the most recent messages below."
+    )
+    combined = (
+        "[Context: start of conversation]\n"
+        f"{head}\n\n"
+        "[… middle omitted …]\n\n"
+        "[Most recent — use this for reply ideas]\n"
+        f"{tail}"
+    )
+    return combined, note
+
+
+def _edge_case_bundle(
+    tone: str,
+    kind: str,
+    micro_snippet: str = "",
+) -> dict[str, Any]:
+    """Structured response for empty / micro / repeated inputs (no LLM)."""
+    t = (tone or "playful").lower().strip() or "playful"
+
+    if kind == "empty":
+        replies = [
+            "Paste a line or two from the chat so I can suggest a reply.",
+            "Tell me what they said last — even one sentence helps.",
+            "Not much to go on yet. What vibe are you going for?",
+            "Quick setup: what did you last send, and what did they reply?",
+            "Add their last message here and I will tailor something natural.",
+        ]
+        note = "No conversation text — add their message or yours for tailored replies."
+        labels = ["safe", "safe", "playful", "safe", "smooth"]
+
+    elif kind == "micro":
+        cue = micro_snippet.strip() or "that"
+        opener = f"Fair — '{cue}' is pretty brief." if len(cue) <= 4 else "That is a short message."
+        replies = [
+            f"{opener} What did you send right before?",
+            "Low-effort texts happen. Try one light follow-up question.",
+            "No stress — you can match energy or ask something easy about their day.",
+            "If you want to keep it moving, one curious line usually beats overthinking.",
+            "If replies stay one-word, give space or switch to a clear, kind ask.",
+        ]
+        note = "Very short input — replies assume a dry or low-effort message."
+        labels = ["safe", "playful", "smooth", "bold", "safe"]
+
+    else:  # repeated
+        replies = [
+            "Sending the same line many times can read as spam — one clear message works better.",
+            "Try one calm follow-up instead of repeating: hey, still good to chat?",
+            "If you are excited, show it once with a question, not a loop.",
+            "Reset: send one honest line and give them space to answer.",
+            "A single thoughtful message beats a wall of duplicates.",
+        ]
+        note = "Repeated messages detected — here are cleaner, natural alternatives."
+        labels = ["safe", "bold", "safe", "smooth", "safe"]
+
+    return {
+        "inspiration_examples": [],
+        "replies": replies,
+        "labels": labels,
+        "note": note,
+    }
+
+
+def _merge_notes(*parts: str | None) -> str | None:
+    """Join non-empty note fragments into one message."""
+    merged = " ".join(p.strip() for p in parts if p and str(p).strip())
+    return merged or None
+
+
+def _reply_tokens(text: str) -> set[str]:
+    """Tokenize reply for quick similarity checks."""
+    tokens = re.findall(r"[a-zA-Z']+", text.lower())
+    return {t for t in tokens if len(t) > 2}
+
+
+def _truncate_reply(reply: str, max_words: int = _MAX_REPLY_WORDS) -> str:
+    """Keep response concise if model overshoots target length."""
+    words = reply.split()
+    if len(words) <= max_words:
+        return reply.strip()
+    trimmed = " ".join(words[:max_words]).rstrip(",.;:-")
+    return f"{trimmed}."
+
+
+def _rewrite_similar_reply(
+    reply: str,
+    tone: str,
+    used_starters: set[str],
+) -> str:
+    """Light rewrite to diversify repetitive structures."""
+    base = re.sub(r"\s+", " ", reply).strip().strip('"')
+    lower = base.lower()
+    tone_lower = tone.lower()
+
+    if "?" in base:
+        prefix_options = [
+            "Curious one:",
+            "Quick question:",
+            "Low-key ask:",
+            "Small follow-up:",
+        ]
+    elif tone_lower in {"flirty", "playful"}:
+        prefix_options = [
+            "Playful angle:",
+            "Smooth option:",
+            "Light move:",
+            "Fresh take:",
+        ]
+    elif tone_lower in {"confident", "direct"}:
+        prefix_options = [
+            "Clear option:",
+            "Direct move:",
+            "Simple line:",
+            "Confident take:",
+        ]
+    else:
+        prefix_options = [
+            "Gentle option:",
+            "Calm take:",
+            "Natural line:",
+            "Easy follow-up:",
+        ]
+
+    for prefix in prefix_options:
+        candidate = _truncate_reply(f"{prefix} {base}")
+        starter = " ".join(candidate.lower().split()[:2])
+        if starter not in used_starters and candidate.lower() != lower:
+            return candidate
+    return _truncate_reply(base)
+
+
+def _diversify_replies(
+    replies: list[str],
+    labels: list[str],
+    tone: str,
+) -> tuple[list[str], list[str]]:
+    """
+    Reduce repetitive outputs while preserving meaning and tone.
+
+    Rules:
+    - avoid duplicate or near-duplicate sentences
+    - vary first words / sentence pattern
+    - keep short and natural
+    """
+    diversified: list[str] = []
+    diversified_labels: list[str] = []
+    used_starters: set[str] = set()
+
+    for reply, label in zip(replies, labels):
+        candidate = _truncate_reply(reply.strip())
+        if not candidate:
+            continue
+
+        cand_tokens = _reply_tokens(candidate)
+        too_similar = False
+        for existing in diversified:
+            ex_tokens = _reply_tokens(existing)
+            union = len(cand_tokens | ex_tokens)
+            if union == 0:
+                continue
+            similarity = len(cand_tokens & ex_tokens) / union
+            if similarity >= _SIMILARITY_REWRITE_THRESHOLD:
+                too_similar = True
+                break
+
+        starter = " ".join(candidate.lower().split()[:2])
+        if starter in used_starters or too_similar:
+            candidate = _rewrite_similar_reply(candidate, tone, used_starters)
+            starter = " ".join(candidate.lower().split()[:2])
+
+        diversified.append(candidate)
+        diversified_labels.append(label)
+        used_starters.add(starter)
+
+    while len(diversified) < 5:
+        diversified.append("Tell me one detail and I can make this more specific.")
+        diversified_labels.append("safe")
+
+    return diversified[:5], diversified_labels[:5]
+
+
+def _tone_score(reply: str, label: str, tone: str) -> float:
+    """Score how well a reply matches requested tone."""
+    requested = tone.lower().strip()
+    text = reply.lower()
+    label_l = label.lower().strip()
+
+    score = 0.5 if label_l in {"playful", "bold", "safe", "smooth"} else 0.2
+    if requested in {"playful", "flirty"} and ("?" in reply or "vibe" in text or "fun" in text):
+        score += 0.25
+    if requested in {"confident", "direct"} and any(x in text for x in ("clear", "simple", "no pressure", "direct")):
+        score += 0.25
+    if requested == "sweet" and any(x in text for x in ("kind", "easy", "no stress", "gentle")):
+        score += 0.25
+    if requested == "funny" and any(x in text for x in ("haha", "lol", "fair", "mysterious")):
+        score += 0.25
+    return min(score, 1.0)
+
+
+def _naturalness_score(reply: str) -> float:
+    """Score readability and text-message naturalness."""
+    text = reply.strip()
+    words = text.split()
+    wc = len(words)
+
+    score = 1.0
+    if wc < 4:
+        score -= 0.25
+    if wc > _MAX_REPLY_WORDS:
+        score -= 0.35
+    if any(token in text.lower() for token in ("based on this vibe", "you could say", "as an ai")):
+        score -= 0.5
+    if "  " in text:
+        score -= 0.1
+    if re.search(r"[A-Z]{5,}", text):
+        score -= 0.2
+    return max(0.0, min(score, 1.0))
+
+
+def _engagement_score(reply: str) -> float:
+    """Score whether the reply naturally continues conversation."""
+    text = reply.lower()
+    score = 0.35
+    if "?" in reply:
+        score += 0.35
+    if any(x in text for x in ("what", "how", "want to", "you up to", "tell me", "your")):
+        score += 0.2
+    if any(x in text for x in ("no pressure", "keep it light", "easy", "calm")):
+        score += 0.1
+    return min(score, 1.0)
+
+
+def _safety_score(reply: str) -> float:
+    """Score safety compliance of a reply."""
+    if _is_unsafe_text(reply):
+        return 0.0
+    text = reply.lower()
+    score = 0.85
+    if any(x in text for x in ("no pressure", "respect", "kind", "comfortable")):
+        score += 0.15
+    return min(score, 1.0)
+
+
+def _score_reply(reply: str, label: str, tone: str) -> float:
+    """
+    Weighted score for ranking replies.
+
+    Dimensions:
+    - tone match
+    - naturalness
+    - engagement
+    - safety
+    """
+    tone_s = _tone_score(reply, label, tone)
+    natural_s = _naturalness_score(reply)
+    engage_s = _engagement_score(reply)
+    safe_s = _safety_score(reply)
+    return round(
+        (tone_s * 0.30) + (natural_s * 0.25) + (engage_s * 0.20) + (safe_s * 0.25),
+        4,
+    )
+
+
+def _rank_replies(
+    replies: list[str],
+    labels: list[str],
+    tone: str,
+) -> tuple[list[str], list[str]]:
+    """Rank replies using multi-factor quality scoring."""
+    scored = []
+    for idx, (reply, label) in enumerate(zip(replies, labels)):
+        scored.append(
+            (
+                _score_reply(reply, label, tone),
+                idx,  # stable tie-breaker
+                reply,
+                label,
+            )
+        )
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    sorted_replies = [x[2] for x in scored]
+    sorted_labels = [x[3] for x in scored]
+    return sorted_replies, sorted_labels
+
+
+def _line_count(text: str) -> int:
+    return max(1, len([ln for ln in text.splitlines() if ln.strip()]))
+
+
+def _post_generation_validate(
+    replies: list[str],
+    labels: list[str],
+    tone: str,
+) -> tuple[list[str], list[str], bool]:
+    """
+    Simple final validation:
+    - exactly 5 replies
+    - remove duplicates / near-duplicates
+    - cap each reply to 1-2 lines
+    - trigger fallback if overall quality looks weak
+    """
+    normalized_replies: list[str] = []
+    normalized_labels: list[str] = []
+
+    for reply, label in zip(replies, labels):
+        trimmed = re.sub(r"\s+$", "", reply.strip())
+        if not trimmed:
+            continue
+        # Keep first 2 non-empty lines if model rambles.
+        lines = [ln.strip() for ln in trimmed.splitlines() if ln.strip()]
+        if len(lines) > _MAX_REPLY_LINES:
+            trimmed = "\n".join(lines[:_MAX_REPLY_LINES])
+        normalized_replies.append(trimmed)
+        normalized_labels.append(label)
+
+    unique_replies: list[str] = []
+    unique_labels: list[str] = []
+    for reply, label in zip(normalized_replies, normalized_labels):
+        cand_tokens = _reply_tokens(reply)
+        is_dup = False
+        for existing in unique_replies:
+            ex_tokens = _reply_tokens(existing)
+            union = len(cand_tokens | ex_tokens)
+            if union == 0:
+                continue
+            sim = len(cand_tokens & ex_tokens) / union
+            if sim >= 0.85 or reply.lower() == existing.lower():
+                is_dup = True
+                break
+        if not is_dup:
+            unique_replies.append(reply)
+            unique_labels.append(label)
+
+    unique_replies, unique_labels = _normalize_output(unique_replies, unique_labels, tone)
+    unique_replies, unique_labels = _diversify_replies(unique_replies, unique_labels, tone)
+    unique_replies, unique_labels = _rank_replies(unique_replies, unique_labels, tone)
+
+    low_quality = False
+    if any(not r.strip() for r in unique_replies):
+        low_quality = True
+    if len(set(r.lower() for r in unique_replies)) < 3:
+        low_quality = True
+    if all(len(_reply_tokens(r)) < 3 for r in unique_replies):
+        low_quality = True
+    if any(_line_count(r) > _MAX_REPLY_LINES for r in unique_replies):
+        low_quality = True
+
+    return unique_replies, unique_labels, low_quality
 
 
 def _safe_redirect_replies(tone: str) -> tuple[list[str], list[str], str]:
@@ -98,9 +581,13 @@ def _build_prompt(
         "Return valid JSON with this exact format:\n"
         '{"replies":["...","...","...","...","..."],"labels":["playful","bold","safe","smooth","playful"]}\n'
         "Rules:\n"
+        "- If the conversation contains a marked 'Most recent' section, base replies mainly on that part.\n"
         "- Exactly 5 replies.\n"
         "- Each reply: short, natural, witty, respectful.\n"
         "- Keep each reply under 16 words.\n"
+        "- Make each reply meaningfully different (different intent or angle).\n"
+        "- Vary sentence structure: mix question, statement, and light invite formats.\n"
+        "- Subtly vary within the selected tone; do not make all 5 lines sound identical.\n"
         "- Do NOT copy any retrieved example wording. Paraphrase and create fresh lines.\n"
         "- Sound like a real text message, not an advisor or narrator.\n"
         "- Avoid meta phrasing like 'based on this vibe' or 'you could say'.\n"
@@ -191,97 +678,198 @@ async def generate_rag_replies(
     """Generate RAG-grounded replies and include retrieval context."""
     selected_tone = (tone or "playful").strip() or "playful"
     style = (user_style or "calm").strip() or "calm"
-    if _is_unsafe_text(conversation_text):
+
+    normalized = _normalize_whitespace(conversation_text or "")
+    _log_rag_event(
+        stage="start",
+        conversation_text=normalized,
+        tone=selected_tone,
+    )
+
+    if not normalized:
+        bundle = _edge_case_bundle(selected_tone, "empty")
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _rank_replies(r, lab, selected_tone)
+        _log_rag_event(
+            stage="edge_case_empty",
+            conversation_text=normalized,
+            tone=selected_tone,
+            replies=r,
+            note=bundle["note"],
+        )
+        return {**bundle, "replies": r, "labels": lab, "provider_used": "mock"}
+
+    if _is_unsafe_text(normalized):
         replies, labels, note = _safe_redirect_replies(selected_tone)
+        _log_rag_event(
+            stage="safety_redirect_input",
+            conversation_text=normalized,
+            tone=selected_tone,
+            replies=replies,
+            note=note,
+        )
         return {
             "inspiration_examples": [],
             "replies": replies,
             "labels": labels,
             "note": note,
+            "provider_used": "mock",
         }
+
+    if _is_mostly_repeated_lines(normalized):
+        bundle = _edge_case_bundle(selected_tone, "repeated")
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _rank_replies(r, lab, selected_tone)
+        _log_rag_event(
+            stage="edge_case_repeated",
+            conversation_text=normalized,
+            tone=selected_tone,
+            replies=r,
+            note=bundle["note"],
+        )
+        return {**bundle, "replies": r, "labels": lab, "provider_used": "mock"}
+
+    if _is_micro_input(normalized):
+        bundle = _edge_case_bundle(selected_tone, "micro", micro_snippet=normalized)
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _rank_replies(r, lab, selected_tone)
+        _log_rag_event(
+            stage="edge_case_micro",
+            conversation_text=normalized,
+            tone=selected_tone,
+            replies=r,
+            note=bundle["note"],
+        )
+        return {**bundle, "replies": r, "labels": lab, "provider_used": "mock"}
+
+    work_text, long_note = _truncate_for_rag_and_llm(normalized)
 
     try:
         examples = retrieve_patterns(
-            conversation_text=conversation_text,
+            conversation_text=work_text,
             tone=selected_tone,
             k=5,
         )
     except Exception:
         examples = []
+    retrieved_ids = [str(x.get("id")) for x in examples if x.get("id")]
 
     if not settings.openai_api_key:
         replies, labels, note = _mock_rag_replies(
-            conversation_text=conversation_text,
+            conversation_text=work_text,
             tone=selected_tone,
             user_style=style,
             examples=examples,
         )
         replies, labels = _normalize_output(replies, labels, selected_tone)
+        replies, labels = _diversify_replies(replies, labels, selected_tone)
+        replies, labels = _rank_replies(replies, labels, selected_tone)
+        replies, labels, low_quality = _post_generation_validate(replies, labels, selected_tone)
+        if low_quality:
+            replies, labels, note = _mock_rag_replies(
+                conversation_text=work_text,
+                tone=selected_tone,
+                user_style=style,
+                examples=examples,
+            )
+            replies, labels, _ = _post_generation_validate(replies, labels, selected_tone)
+            note = _merge_notes(note, "Low-quality output detected; switched to mock fallback.")
+        merged_note = _merge_notes(long_note, note)
+        _log_rag_event(
+            stage="mock_generation",
+            conversation_text=work_text,
+            tone=selected_tone,
+            retrieved_ids=retrieved_ids,
+            replies=replies,
+            note=merged_note,
+        )
         return {
             "inspiration_examples": examples,
             "replies": replies,
             "labels": labels,
-            "note": note,
+            "note": merged_note,
+            "provider_used": "mock",
         }
 
-    system = (
-        "You are RizzAI, an expert dating reply assistant. "
-        "Use retrieved patterns as style guidance, not as text to copy. "
-        "Output only valid JSON."
-    )
-    user_payload = _build_prompt(
-        conversation_text=conversation_text,
+    prompt = _build_prompt(
+        conversation_text=work_text,
         tone=selected_tone,
         user_style=style,
         examples=examples,
     )
-
-    url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.openai_api_key}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "model": settings.openai_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_payload},
-        ],
-        "temperature": 0.8,
-        "max_tokens": 700,
-        "response_format": {"type": "json_object"},
-    }
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(url, headers=headers, json=body)
-        r.raise_for_status()
-        data = r.json()
-
-    content = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-        .strip()
-    )
-
-    replies, labels = _parse_llm_output(content)
+    replies = generate_replies(prompt)
+    provider_name = get_last_provider_name()
+    logger.info("[LLM] provider=%s  replies_raw=%d", provider_name, len(replies))
+    labels = []
     replies, labels = _normalize_output(replies, labels, selected_tone)
+    replies, labels = _diversify_replies(replies, labels, selected_tone)
+    replies, labels = _rank_replies(replies, labels, selected_tone)
+    replies, labels, low_quality = _post_generation_validate(replies, labels, selected_tone)
+    if low_quality:
+        replies, labels, mock_note = _mock_rag_replies(
+            conversation_text=work_text,
+            tone=selected_tone,
+            user_style=style,
+            examples=examples,
+        )
+        replies, labels, _ = _post_generation_validate(replies, labels, selected_tone)
+        rag_note = _merge_notes(
+            "Low-quality output detected; switched to mock fallback.",
+            None if examples else "RAG note: no retrieved examples found, generated from base instructions.",
+        )
+        merged_note = _merge_notes(long_note, mock_note, rag_note)
+        _log_rag_event(
+            stage="llm_generation_fallback_mock",
+            conversation_text=work_text,
+            tone=selected_tone,
+            retrieved_ids=retrieved_ids,
+            replies=replies,
+            note=merged_note,
+        )
+        return {
+            "inspiration_examples": examples,
+            "replies": replies,
+            "labels": labels,
+            "note": merged_note,
+            "provider_used": "mock",
+        }
+
     if any(_is_unsafe_text(reply) for reply in replies):
         safe_replies, safe_labels, safe_note = _safe_redirect_replies(selected_tone)
+        merged_note = _merge_notes(long_note, safe_note)
+        _log_rag_event(
+            stage="safety_redirect_output",
+            conversation_text=work_text,
+            tone=selected_tone,
+            retrieved_ids=retrieved_ids,
+            replies=safe_replies,
+            note=merged_note,
+        )
         return {
             "inspiration_examples": examples,
             "replies": safe_replies,
             "labels": safe_labels,
-            "note": safe_note,
+            "note": merged_note,
+            "provider_used": provider_name,
         }
 
-    note = None
+    rag_note = None
     if not examples:
-        note = "RAG note: no retrieved examples found, generated from base instructions."
+        rag_note = "RAG note: no retrieved examples found, generated from base instructions."
+    merged_note = _merge_notes(long_note, rag_note)
+    _log_rag_event(
+        stage="llm_generation",
+        conversation_text=work_text,
+        tone=selected_tone,
+        retrieved_ids=retrieved_ids,
+        replies=replies,
+        note=merged_note,
+    )
 
     return {
         "inspiration_examples": examples,
         "replies": replies,
         "labels": labels,
-        "note": note,
+        "note": merged_note,
+        "provider_used": provider_name,
     }

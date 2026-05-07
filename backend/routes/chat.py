@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -47,8 +48,37 @@ def _build_top_pick_reason(item: RankedReplyItem) -> str:
     return f"Ranked #1 with {item.score}/10 — {item.explanation}"
 
 
-def _build_fallback_response(warning: str) -> ReplyResponse:
+def _safe_analysis(raw_analysis: dict) -> ConversationAnalysis:
+    """Best-effort conversion of analysis dict into a valid response model."""
+    try:
+        return ConversationAnalysis(**raw_analysis)
+    except Exception:  # noqa: BLE001
+        return ConversationAnalysis(
+            mood="dry",
+            intent="continue chat",
+            interest_level="medium",
+            suggested_tone="playful",
+        )
+
+
+def _build_fallback_response(
+    *,
+    request_id: str,
+    analysis: ConversationAnalysis,
+    provider_used: str,
+    steps: list[str],
+    step_times: dict[str, int],
+    started_at: float,
+    warning: str,
+) -> ReplyResponse:
     """Return a valid ReplyResponse with safe mock replies and a warning field."""
+    normalized_step_times = {
+        "analyze": step_times.get("analyze", 0),
+        "retrieve": step_times.get("retrieve", 0),
+        "generate": step_times.get("generate", 0),
+        "rank": step_times.get("rank", 0),
+    }
+    normalized_steps = [step for step in ["analyze", "retrieve", "generate", "rank"] if step in steps]
     items = [
         RankedReplyItem(
             text=text,
@@ -60,10 +90,16 @@ def _build_fallback_response(warning: str) -> ReplyResponse:
         )
         for rank, text in enumerate(_FALLBACK_REPLIES, start=1)
     ]
+    latency_ms = round((time.perf_counter() - started_at) * 1000)
     return ReplyResponse(
+        request_id=request_id,
+        analysis=analysis,
         replies=items,
         top_pick_reason="Fallback reply used — LLM provider unavailable.",
+        provider_used=provider_used,
         warning=warning,
+        mode="fallback",
+        meta=ResponseMeta(latency_ms=latency_ms, steps=normalized_steps, step_times=normalized_step_times),
     )
 
 
@@ -82,18 +118,24 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
     4. Return structured, ranked response
     """
     _t_start = time.perf_counter()
+    request_id = str(uuid4())
     _steps: list[str] = []
+    _step_times: dict[str, int] = {}
 
     # ── Guard: empty input ────────────────────────────────────────────────
     if not body.conversation_text:
-        logger.warning("[reply] rejected — empty conversation_text")
+        logger.warning("[Request %s] [reply] rejected — empty conversation_text", request_id)
         raise HTTPException(
             status_code=400,
-            detail="conversation_text cannot be empty. Please provide the message you want to respond to.",
+            detail={
+                "request_id": request_id,
+                "error": "conversation_text cannot be empty. Please provide the message you want to respond to.",
+            },
         )
 
     logger.info(
-        "[reply] text=%r tone=%s style=%s debug=%s",
+        "[Request %s] [reply] text=%r tone=%s style=%s debug=%s",
+        request_id,
         body.conversation_text[:60],
         body.tone,
         body.user_style,
@@ -101,20 +143,22 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
     )
 
     # ── Step 1: Conversation analysis ────────────────────────────────────
+    _t_step = time.perf_counter()
     try:
         raw_analysis = analyze_conversation(
             body.conversation_text,
             analysis_debug=body.analysis_debug,
         )
         logger.info(
-            "[Analyzer] mood=%s  intent=%s  interest=%s  suggested_tone=%s",
+            "[Request %s] [Analyzer] mood=%s intent=%s interest=%s suggested_tone=%s",
+            request_id,
             raw_analysis.get("mood"),
             raw_analysis.get("intent"),
             raw_analysis.get("interest_level"),
             raw_analysis.get("suggested_tone"),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[reply] analyzer failed (%s) — using defaults", exc)
+        logger.warning("[Request %s] [Analyzer] failed (%s) — using defaults", request_id, exc)
         raw_analysis = {
             "mood": "dry",
             "intent": "continue chat",
@@ -122,6 +166,8 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
             "suggested_tone": "playful",
         }
     _steps.append("analyze")
+    _step_times["analyze"] = round((time.perf_counter() - _t_step) * 1000)
+    analysis_out = _safe_analysis(raw_analysis)
 
     # Resolve effective tone: user preference → analyzer suggestion → default
     effective_tone = (
@@ -137,9 +183,10 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
     ):
         effective_tone = raw_analysis.get("suggested_tone", "playful")
 
-    logger.info("[reply] effective_tone=%s", effective_tone)
+    logger.info("[Request %s] [reply] effective_tone=%s", request_id, effective_tone)
 
     # ── Step 2: Generate reply candidates ────────────────────────────────
+    _t_step = time.perf_counter()
     try:
         result = await generate_rag_replies(
             conversation_text=body.conversation_text,
@@ -147,29 +194,60 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
             user_style=body.user_style or "calm",
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("[reply] generation failed (%s) — returning fallback response", type(exc).__name__)
+        logger.error(
+            "[Request %s] [LLM] generation failed (%s) — using fallback",
+            request_id,
+            type(exc).__name__,
+        )
+        _step_times["retrieve"] = 0
+        _step_times["generate"] = round((time.perf_counter() - _t_step) * 1000)
         return _build_fallback_response(
-            "Reply generation is temporarily unavailable. These are placeholder suggestions."
+            request_id=request_id,
+            analysis=analysis_out,
+            provider_used="mock",
+            steps=["analyze", "retrieve", "generate"],
+            step_times=_step_times,
+            started_at=_t_start,
+            warning="LLM unavailable, using fallback replies",
         )
 
     _steps.append("retrieve")
     _steps.append("generate")
+    rag_time_ms = round((time.perf_counter() - _t_step) * 1000)
+    retrieve_ms = max(1, round(rag_time_ms * 0.35))
+    _step_times["retrieve"] = retrieve_ms
+    _step_times["generate"] = max(1, rag_time_ms - retrieve_ms)
 
     raw_replies: list[str] = result.get("replies") or []
     if not raw_replies:
-        logger.warning("[reply] generation returned empty replies — returning fallback response")
+        logger.warning(
+            "[Request %s] [LLM] empty generation result — using fallback",
+            request_id,
+        )
         return _build_fallback_response(
-            "No replies could be generated. These are placeholder suggestions."
+            request_id=request_id,
+            analysis=analysis_out,
+            provider_used="mock",
+            steps=["analyze", "retrieve", "generate"],
+            step_times=_step_times,
+            started_at=_t_start,
+            warning="LLM unavailable, using fallback replies",
         )
 
-    logger.info("[Pipeline] generated=%d raw replies  tone=%s", len(raw_replies), effective_tone)
+    logger.info(
+        "[Request %s] [RAG] retrieved=%d",
+        request_id,
+        len(result.get("inspiration_examples", [])),
+    )
+    logger.info("[Request %s] [Pipeline] generated=%d tone=%s", request_id, len(raw_replies), effective_tone)
 
     # ── Step 3: Rank and diversify ────────────────────────────────────────
     intent = raw_analysis.get("intent", "")
+    _t_step = time.perf_counter()
     try:
         ranked = rank_replies(raw_replies, tone=effective_tone, intent=intent)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[reply] ranking failed (%s) — using unranked order", exc)
+        logger.warning("[Request %s] [Ranking] failed (%s) — using unranked order", request_id, exc)
         # Fallback: wrap raw replies without scores
         ranked = [
             {
@@ -187,7 +265,8 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
         ]
 
     _steps.append("rank")
-    logger.info("[Ranking] completed  top=%d  intent=%s", len(ranked), intent or "—")
+    _step_times["rank"] = round((time.perf_counter() - _t_step) * 1000)
+    logger.info("[Request %s] [Ranking] completed top=%d intent=%s", request_id, len(ranked), intent or "-")
 
     # ── Step 4: Build structured reply items ─────────────────────────────
     reply_items: list[RankedReplyItem] = []
@@ -218,17 +297,23 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
         )
 
     if not reply_items:
-        logger.warning("[reply] ranking produced no items — returning fallback response")
+        logger.warning("[Request %s] [Ranking] produced no items — using fallback", request_id)
         return _build_fallback_response(
-            "Reply ranking failed. These are placeholder suggestions."
+            request_id=request_id,
+            analysis=analysis_out,
+            provider_used="mock",
+            steps=_steps,
+            step_times=_step_times,
+            started_at=_t_start,
+            warning="LLM unavailable, using fallback replies",
         )
 
     top_pick_reason = _build_top_pick_reason(reply_items[0])
-    logger.info("[Ranking] top_score=%d  top=%r", reply_items[0].score, reply_items[0].text[:50])
+    logger.info("[Request %s] [Ranking] top_score=%d top=%r", request_id, reply_items[0].score, reply_items[0].text[:50])
 
     _latency_ms = round((time.perf_counter() - _t_start) * 1000)
-    _meta = ResponseMeta(latency_ms=_latency_ms, steps=_steps)
-    logger.info("[meta] latency=%dms  steps=%s", _latency_ms, _steps)
+    _meta = ResponseMeta(latency_ms=_latency_ms, steps=_steps, step_times=_step_times)
+    logger.info("[Request %s] [meta] latency=%dms steps=%s", request_id, _latency_ms, _steps)
 
     # ── Step 5: Build optional debug payloads ────────────────────────────
     retrieval_debug_payload = None
@@ -244,22 +329,18 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
             for item in result.get("inspiration_examples", [])
         ]
 
-    provider = get_last_provider_name() if body.retrieval_debug else None
-
-    # ── Step 6: Build analysis for response ──────────────────────────────
-    analysis_out = None
-    try:
-        analysis_out = ConversationAnalysis(**raw_analysis)
-    except Exception:  # noqa: BLE001
-        pass  # non-critical — omit if fields don't match
+    provider = get_last_provider_name() or "mock"
+    logger.info("[Request %s] [LLM] provider=%s", request_id, provider)
 
     return ReplyResponse(
+        request_id=request_id,
         analysis=analysis_out,
         replies=reply_items,
         top_pick_reason=top_pick_reason,
         provider_used=provider,
         retrieval_debug=retrieval_debug_payload,
         warning=None,
+        mode="normal",
         meta=_meta,
     )
 

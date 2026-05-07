@@ -65,6 +65,10 @@ class ResponseMeta(BaseModel):
     steps: list[str] = Field(
         description="Ordered list of pipeline steps that completed: analyze | retrieve | generate | rank."
     )
+    step_times: dict[str, int] = Field(
+        default_factory=dict,
+        description="Per-step latency in milliseconds for analyze/retrieve/generate/rank.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +133,11 @@ class ReplyRequest(BaseModel):
 class ReplyResponse(BaseModel):
     """Full response from the reply generation endpoint."""
 
-    analysis: ConversationAnalysis | None = Field(
+    request_id: str | None = Field(
         default=None,
+        description="Unique request identifier for tracing logs and responses.",
+    )
+    analysis: ConversationAnalysis = Field(
         description="Conversation analysis that guided tone and strategy.",
     )
     replies: list[RankedReplyItem] = Field(
@@ -151,8 +158,11 @@ class ReplyResponse(BaseModel):
         default=None,
         description="Non-fatal warning, e.g. LLM unavailable — fallback replies returned.",
     )
-    meta: ResponseMeta | None = Field(
+    mode: str | None = Field(
         default=None,
+        description="Response mode: normal | fallback.",
+    )
+    meta: ResponseMeta = Field(
         description="Pipeline execution metadata: latency and steps completed.",
     )
 

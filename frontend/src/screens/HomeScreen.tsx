@@ -1,25 +1,30 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { FloatingCard, GlassCard, GradientButton } from '../components/ui';
+import { premiumTheme } from '../theme/premium';
 import { RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 export function HomeScreen({ navigation }: Props) {
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>RizzAI</Text>
-      <Text style={styles.subtitle}>
-        Your AI dating wingman. Turn ideas into confident, respectful replies.
-      </Text>
+    <LinearGradient colors={premiumTheme.gradients.hero} style={styles.container}>
+      <FloatingCard style={styles.heroWrap}>
+        <GlassCard>
+          <Text style={styles.title}>CharmAI</Text>
+          <Text style={styles.subtitle}>
+            Your AI dating assistant
+          </Text>
+        </GlassCard>
+      </FloatingCard>
 
-      <Pressable
-        style={styles.button}
+      <GradientButton
+        label="Start"
         onPress={() => navigation.navigate('ChatInput')}
-      >
-        <Text style={styles.buttonText}>Start New Reply</Text>
-      </Pressable>
-    </View>
+      />
+    </LinearGradient>
   );
 }
 
@@ -27,30 +32,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
     padding: 20,
+    backgroundColor: premiumTheme.colors.background,
+  },
+  heroWrap: {
+    marginBottom: 18,
   },
   title: {
     fontSize: 36,
     fontWeight: '700',
-    color: '#f9fafb',
+    color: premiumTheme.colors.textPrimary,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 16,
-    color: '#cbd5e1',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  button: {
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: premiumTheme.colors.textSecondary,
+    lineHeight: 22,
   },
 });

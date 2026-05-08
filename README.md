@@ -143,9 +143,9 @@ python -c "from services.rag_service import retrieve_patterns; import json; prin
 
 Expected output: top relevant examples with `id`, `tone`, `situation`, `content`, and `relevance_score`.
 
-## Frontend Setup (Expo React Native)
+## Running the frontend
 
-1. Open a second terminal in:
+1. Open a terminal in:
    `c:\Users\Lenovo\Desktop\RizzAI\frontend`
 2. Install dependencies:
 
@@ -153,20 +153,27 @@ Expected output: top relevant examples with `id`, `tone`, `situation`, `content`
    npm install
    ```
 
-3. Start Expo:
+3. Recommended startup:
 
    ```powershell
-   npm run start
+   npx expo start --lan -c
    ```
 
-4. Open on Android/iOS/Web using the Expo CLI options.
+4. Use Expo CLI shortcuts:
+   - scan QR with **Expo Go** (mobile)
+   - press `w` for web testing
+
+Notes:
+- Ensure phone and laptop are on the same Wi-Fi.
+- If Metro freezes or gets stuck, restart with `-c` again.
+- LAN mode is the default stable workflow for this project.
 
 ## Notes
 
-- Frontend currently calls the backend at:
-  `http://127.0.0.1:8000`
-- On a physical phone, update that URL to your computer's local IP in:
+- Frontend API base URL is configured in:
   `frontend/src/services/api.ts`
+- For **web**, use localhost (`http://127.0.0.1:8000`).
+- For **mobile (Expo Go)**, use your laptop LAN IP (`http://<your-lan-ip>:8000`).
 - If `OPENAI_API_KEY` is not set, backend returns demo suggestions so the app still works.
 - For RAG ingestion/retrieval, set `OPENAI_API_KEY` in `backend/.env` (plus optional `OPENAI_BASE_URL` for compatible providers).
 # RizzAI

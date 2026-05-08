@@ -1,6 +1,6 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,7 @@ import {
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { AnimatedInput, GlassCard, GradientButton } from '../components/ui';
-import { fetchReplySuggestions } from '../services/api';
+import { ApiClientError, fetchReplySuggestions } from '../services/api';
 import { premiumTheme } from '../theme/premium';
 import { RootStackParamList } from '../types/navigation';
 
@@ -26,6 +26,8 @@ export function ChatInputScreen({ navigation }: Props) {
   const [tone, setTone] = useState<(typeof TONES)[number]>('flirty');
   const [explainabilityMode, setExplainabilityMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const lastRequestTs = useRef(0);
+  const pendingRequest = useRef(false);
   const helperOpacity = useSharedValue(0);
 
   useEffect(() => {
@@ -37,33 +39,60 @@ export function ChatInputScreen({ navigation }: Props) {
     maxHeight: explainabilityMode ? 36 : 0,
   }));
 
+  function showFriendlyError(error: unknown) {
+    const base = 'Could not generate replies';
+    const friendly =
+      error instanceof ApiClientError
+        ? error.message
+        : base;
+
+    Alert.alert(base, friendly, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Retry', onPress: () => { void handleGenerate(); } },
+    ]);
+  }
+
   async function handleGenerate() {
     if (!message.trim()) {
       Alert.alert('Message required', 'Please enter a message or situation.');
       return;
     }
+    if (pendingRequest.current) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastRequestTs.current < 900) {
+      return;
+    }
 
     try {
+      pendingRequest.current = true;
+      lastRequestTs.current = now;
       setIsLoading(true);
       const data = await fetchReplySuggestions(
         message.trim(),
         tone.trim() || 'playful',
-        explainabilityMode
+        explainabilityMode,
       );
+
+      if (data.warning) {
+        Alert.alert('Notice', data.warning);
+      }
+
       navigation.navigate('ReplyResults', {
         prompt: message.trim(),
         tone: tone.trim() || 'playful',
-        suggestions: data.replies ?? data.suggestions,
-        retrievalDebug: data.retrieval_debug ?? undefined,
+        suggestions: data.replies,
+        retrievalDebug: data.retrievalDebug ?? undefined,
         explainabilityMode,
-        note: data.note,
+        providerUsed: data.providerUsed ?? null,
+        latencyMs: data.latencyMs ?? null,
+        warning: data.warning ?? null,
       });
     } catch (error) {
-      Alert.alert(
-        'Generation failed',
-        error instanceof Error ? error.message : 'Unexpected error'
-      );
+      showFriendlyError(error);
     } finally {
+      pendingRequest.current = false;
       setIsLoading(false);
     }
   }

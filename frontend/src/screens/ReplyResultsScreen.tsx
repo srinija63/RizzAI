@@ -2,7 +2,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, {
   interpolate,
   useAnimatedStyle,
@@ -18,9 +18,19 @@ type Props = NativeStackScreenProps<RootStackParamList, 'ReplyResults'>;
 const LABELS = ['smooth', 'playful', 'bold'] as const;
 
 export function ReplyResultsScreen({ route, navigation }: Props) {
-  const { prompt, tone, suggestions, note, retrievalDebug, explainabilityMode } = route.params;
+  const {
+    prompt,
+    tone,
+    suggestions,
+    retrievalDebug,
+    explainabilityMode,
+    providerUsed,
+    latencyMs,
+    warning,
+  } = route.params;
   const [showWhy, setShowWhy] = useState(false);
   const [showAllDebug, setShowAllDebug] = useState(false);
+  const [copyToast, setCopyToast] = useState('');
   const { width } = useWindowDimensions();
   const pageWidth = width - 32;
   const expandProgress = useSharedValue(0);
@@ -45,7 +55,8 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
 
   async function copyText(text: string) {
     await Clipboard.setStringAsync(text);
-    Alert.alert('Copied', 'Reply copied to clipboard.');
+    setCopyToast('Reply copied');
+    setTimeout(() => setCopyToast(''), 1400);
   }
 
   return (
@@ -67,8 +78,8 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
           contentContainerStyle={styles.swipeTrack}
         >
           {suggestions.map((suggestion, index) => {
-            const label = LABELS[index % LABELS.length];
-            const score = Math.max(7, 9 - (index % 3));
+            const label = suggestion.label ?? LABELS[index % LABELS.length];
+            const score = suggestion.score ?? Math.max(7, 9 - (index % 3));
 
             return (
               <FloatingCard key={`${index}-${suggestion}`} style={[styles.replyCardWrap, { width: pageWidth }]}>
@@ -77,10 +88,10 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
                     <Text style={styles.labelPill}>{label}</Text>
                     <Text style={styles.scoreBadge}>Score {score}/10</Text>
                   </View>
-                  <Text style={styles.suggestionText}>{suggestion}</Text>
+                  <Text style={styles.suggestionText}>{suggestion.text}</Text>
                   <Pressable
                     style={({ pressed }) => [styles.copyButton, pressed && styles.copyButtonPressed]}
-                    onPress={() => copyText(suggestion)}
+                    onPress={() => copyText(suggestion.text)}
                   >
                     <Text style={styles.copyButtonText}>Copy</Text>
                   </Pressable>
@@ -90,7 +101,10 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
           })}
         </Animated.ScrollView>
 
-        {note ? <Text style={styles.note}>{note}</Text> : null}
+        {warning ? <Text style={styles.warningText}>{warning}</Text> : null}
+        <Text style={styles.metaFooter}>
+          Generated in {latencyMs ?? 'N/A'} ms using {providerUsed ?? 'mock'}
+        </Text>
 
         {explainabilityMode && retrievalDebug && retrievalDebug.length > 0 ? (
           <GlassCard style={styles.explainCard}>
@@ -150,6 +164,12 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
           label="Try Another Prompt"
           onPress={() => navigation.navigate('ChatInput')}
         />
+
+        {copyToast ? (
+          <View style={styles.toast}>
+            <Text style={styles.toastText}>{copyToast}</Text>
+          </View>
+        ) : null}
       </ScrollView>
     </LinearGradient>
   );
@@ -236,10 +256,15 @@ const styles = StyleSheet.create({
     color: premiumTheme.colors.textPrimary,
     fontSize: 15,
   },
-  note: {
-    color: '#cbd5e1',
-    fontStyle: 'italic',
+  warningText: {
+    color: '#fde68a',
+    fontSize: 12,
     marginTop: 4,
+    marginBottom: 6,
+  },
+  metaFooter: {
+    color: '#94a3b8',
+    fontSize: 12,
     marginBottom: 16,
   },
   explainCard: {
@@ -330,5 +355,20 @@ const styles = StyleSheet.create({
     color: '#dbeafe',
     fontWeight: '700',
     fontSize: 13,
+  },
+  toast: {
+    alignSelf: 'center',
+    marginTop: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(96,165,250,0.45)',
+    backgroundColor: 'rgba(15,23,42,0.9)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  toastText: {
+    color: '#dbeafe',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

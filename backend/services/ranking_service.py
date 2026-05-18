@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Optional
 
-from services.llm_service import generate_with_ollama, generate_with_openai
+from services.llm_service import generate_text
 
 logger = logging.getLogger("rizzai.ranking")
 
@@ -227,7 +227,7 @@ _FLOWERY_ADJECTIVES = re.compile(
 )
 
 # Overly long replies (word count threshold for try-hard check).
-_TRYHARD_LENGTH = 22
+_TRYHARD_LENGTH = 58
 
 # Max word count for a reply to qualify as "purely grounded" (short + simple).
 _GROUNDED_MAX_WORDS = 14
@@ -325,12 +325,14 @@ def _heuristic_score(reply: str, tone: str) -> RankedReply:
     words = reply.split()
     word_count = len(words)
 
-    # Naturalness: ideal window 5–14 words; penalise too short or too long.
+    # Naturalness: reward concise texting but allow longer grounded replies.
     if word_count < 3:
         nat = 3
-    elif word_count <= 14:
+    elif word_count <= 18:
         nat = 8
-    elif word_count <= 20:
+    elif word_count <= 40:
+        nat = 7
+    elif word_count <= 52:
         nat = 6
     else:
         nat = 4
@@ -365,7 +367,7 @@ def _heuristic_score(reply: str, tone: str) -> RankedReply:
     _natural_tone = not needy_hits and not pushy_hits
     _brevity_bonus = (
         not tryhard
-        and word_count <= 15
+        and word_count <= 22
         and word_count >= 4      # avoid rewarding near-empty replies
         and _natural_tone
     )
@@ -390,7 +392,7 @@ def _heuristic_score(reply: str, tone: str) -> RankedReply:
         return "Feels slightly forced rather than natural."
 
     issues: list[str] = []
-    if not tryhard and word_count > 20:
+    if not tryhard and word_count > 55:
         issues.append("too long, loses conversational feel")
     if needy_hits:
         issues.append("slightly needy phrasing")
@@ -524,7 +526,17 @@ def _enforce_diversity(
                 top_n,
             )
 
-    return accepted
+    if len(accepted) < top_n:
+        seen_text = {item["reply"].strip().lower() for item in accepted}
+        for candidate in sorted_scored:
+            if len(accepted) >= top_n:
+                break
+            text_key = candidate["reply"].strip().lower()
+            if text_key and text_key not in seen_text:
+                accepted.append(candidate)
+                seen_text.add(text_key)
+
+    return accepted[:top_n]
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +652,7 @@ def _llm_semantic_classify(
     """
     Ask the LLM to classify each reply's character for the given intent.
 
-    Uses OpenAI → Ollama fallback.  Returns None if unavailable or parsing fails,
+    Uses Gemini → Ollama fallback.  Returns None if unavailable or parsing fails,
     so callers can gracefully fall back to rule-only scoring.
     """
     schema = _INTENT_CLASS_SCHEMA.get(intent.lower())
@@ -652,22 +664,11 @@ def _llm_semantic_classify(
     if not prompt:
         return None
 
-    # --- OpenAI ---
     try:
-        raw = generate_with_openai(prompt)
+        raw = generate_text(prompt, max_tokens=500)
         result = _parse_classifications(raw, len(replies), valid_classes)
         if result:
-            logger.debug("ranking semantic: classified %d replies via OpenAI", len(result))
-            return result
-    except Exception:  # noqa: BLE001
-        pass
-
-    # --- Ollama ---
-    try:
-        raw = generate_with_ollama(prompt)
-        result = _parse_classifications(raw, len(replies), valid_classes)
-        if result:
-            logger.debug("ranking semantic: classified %d replies via Ollama", len(result))
+            logger.debug("ranking semantic: classified %d replies via LLM", len(result))
             return result
     except Exception:  # noqa: BLE001
         pass
@@ -829,7 +830,7 @@ def rank_replies(
     Score, adjust for intent, diversify, and sort replies.
 
     Flow:
-    1. Score all replies (OpenAI → Ollama → heuristic fallback)
+    1. Score all replies (Gemini → Ollama → heuristic fallback)
     2. Apply intent-aware ±1 nudges
     3. Sort by adjusted score descending
     4. Enforce diversity: drop near-duplicates, keep the higher-scored version
@@ -852,22 +853,12 @@ def rank_replies(
     prompt = _build_ranking_prompt(replies, tone)
     scored: list[RankedReply] | None = None
 
-    # --- OpenAI ---
-    try:
-        raw = generate_with_openai(prompt)
-        scored = _parse_llm_scores(raw, replies)
-        if scored:
-            logger.info("ranking: scored %d replies via OpenAI", len(scored))
-    except Exception:  # noqa: BLE001
-        pass
-
-    # --- Ollama ---
     if scored is None:
         try:
-            raw = generate_with_ollama(prompt)
+            raw = generate_text(prompt, max_tokens=700)
             scored = _parse_llm_scores(raw, replies)
             if scored:
-                logger.info("ranking: scored %d replies via Ollama", len(scored))
+                logger.info("ranking: scored %d replies via LLM", len(scored))
         except Exception:  # noqa: BLE001
             pass
 

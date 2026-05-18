@@ -1,40 +1,26 @@
-import { ReactNode, useEffect } from 'react';
+import { ReactNode } from 'react';
 import { StyleProp, ViewStyle } from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
+import { MotiView } from 'moti';
 
 import { premiumTheme } from '../../theme/premium';
+import { motionSpring } from '../../theme/motion';
 
 type FloatingCardProps = {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  /** Staggered entrance delay (ms) for reply lists */
+  enterDelay?: number;
 };
 
-export function FloatingCard({ children, style }: FloatingCardProps) {
-  const y = useSharedValue(0);
-
-  useEffect(() => {
-    y.value = withRepeat(
-      withSequence(
-        withTiming(-6, { duration: 2200, easing: Easing.inOut(Easing.quad) }),
-        withTiming(0, { duration: 2200, easing: Easing.inOut(Easing.quad) }),
-      ),
-      -1,
-      true,
-    );
-  }, [y]);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: y.value }],
-    shadowOpacity: 0.22 + Math.abs(y.value) * 0.02,
-    shadowRadius: 14 + Math.abs(y.value) * 1.2,
-  }));
-
-  return <Animated.View style={[premiumTheme.shadow, animatedStyle, style]}>{children}</Animated.View>;
+export function FloatingCard({ children, style, enterDelay = 0 }: FloatingCardProps) {
+  return (
+    <MotiView
+      from={{ opacity: 0, translateY: 18, scale: 0.98 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{ ...motionSpring.card, delay: enterDelay }}
+      style={[premiumTheme.shadow, style]}
+    >
+      {children}
+    </MotiView>
+  );
 }

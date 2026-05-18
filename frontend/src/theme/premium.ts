@@ -7,6 +7,9 @@ export const premiumTheme = {
     border: 'rgba(167, 139, 250, 0.25)',
     textPrimary: '#f8fafc',
     textSecondary: '#cbd5e1',
+    glowRose: 'rgba(251, 113, 133, 0.35)',
+    glowViolet: 'rgba(124, 58, 237, 0.45)',
+    glowAmber: 'rgba(251, 191, 36, 0.2)',
   },
   gradients: {
     hero: ['#1f1235', '#111827', '#0f172a'] as readonly [
@@ -14,12 +17,15 @@ export const premiumTheme = {
       ColorValue,
       ColorValue,
     ],
+    /** Warmer romantic wash for ambient layers */
+    romantic: ['#2a0a1a', '#1a1033', '#0c1224'] as readonly [ColorValue, ColorValue, ColorValue],
     button: ['#7c3aed', '#3b82f6'] as readonly [ColorValue, ColorValue],
   },
   radius: {
     card: 24,
     input: 22,
     button: 24,
+    pill: 999,
   },
   shadow: {
     shadowColor: '#000',

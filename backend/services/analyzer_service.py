@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from services.llm_service import generate_with_ollama, generate_with_openai
+from services.llm_service import generate_text
 
 DEFAULT_ANALYSIS: dict[str, str] = {
     "mood": "dry",
@@ -319,15 +319,68 @@ def _safe_parse(raw: str) -> dict[str, str]:
         return dict(DEFAULT_ANALYSIS)
 
 
+def _fast_keyword_intent(conversation_text: str) -> str:
+    """Lightweight intent for ranking — no LLM call."""
+    t = conversation_text.lower()
+    if any(w in t for w in ("ask her out", "ask out", "grab coffee", "go on a date", "meet up", "weekend plan")):
+        return "ask out"
+    if any(w in t for w in ("sorry", "my bad", "ghosted", "haven't replied", "left on read")):
+        return "recover"
+    if any(w in t for w in ("cute", "hot", "flirt", "date me", "single")):
+        return "flirt"
+    if any(w in t for w in ("lol", "haha", "lmao", "ok", "k", "hmm", "idk")):
+        return "recover"
+    return "continue chat"
+
+
+def analyze_conversation_fast(conversation_text: str, analysis_debug: bool = False) -> dict[str, str]:
+    """
+    Fast analysis for /api/reply — rules + keywords only (no Gemini).
+
+    User tone/confidence are chosen in the app; this only supplies mood/intent metadata.
+    """
+    normalized = _normalize_text(conversation_text)
+    if not normalized:
+        return _attach_debug(
+            DEFAULT_ANALYSIS,
+            source="fast",
+            reason="empty input defaults",
+            enabled=analysis_debug,
+        )
+
+    quick = _quick_rule_based_analysis(normalized)
+    if quick is not None:
+        return _attach_debug(
+            quick,
+            source="rule-based",
+            reason=_rule_reason(normalized),
+            enabled=analysis_debug,
+        )
+
+    intent = _fast_keyword_intent(normalized)
+    mood = "playful" if intent == "flirt" else "dry" if intent == "recover" else "interested"
+    result = {
+        "mood": mood,
+        "intent": intent,
+        "interest_level": "medium",
+        "suggested_tone": "playful",
+    }
+    return _attach_debug(
+        _post_validate(result, normalized, analysis_debug=analysis_debug),
+        source="fast",
+        reason="keyword intent (no LLM analyze)",
+        enabled=analysis_debug,
+    )
+
+
 def analyze_conversation(conversation_text: str, analysis_debug: bool = False) -> dict[str, str]:
     """
     Analyze chat mood/intent/interest/tone with provider fallback.
 
     Flow:
     1) Rule-based (narrow short patterns)
-    2) OpenAI
-    3) Ollama
-    4) Safe defaults
+    2) Gemini / Ollama
+    3) Safe defaults
     """
     normalized = _normalize_text(conversation_text)
     if not normalized:
@@ -349,21 +402,7 @@ def analyze_conversation(conversation_text: str, analysis_debug: bool = False) -
     prompt = _build_analysis_prompt(normalized)
 
     try:
-        raw = generate_with_openai(prompt)
-        parsed = _safe_parse(raw)
-        if parsed:
-            result = _attach_debug(
-                parsed,
-                source="llm",
-                reason="LLM semantic analysis",
-                enabled=analysis_debug,
-            )
-            return _post_validate(result, normalized, analysis_debug=analysis_debug)
-    except Exception:  # noqa: BLE001
-        pass
-
-    try:
-        raw = generate_with_ollama(prompt)
+        raw = generate_text(prompt, max_tokens=500)
         parsed = _safe_parse(raw)
         if parsed:
             result = _attach_debug(

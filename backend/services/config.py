@@ -15,14 +15,20 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    openai_api_key: str | None = None
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
-    openai_embedding_model: str = "text-embedding-3-small"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.0-flash"
+
     local_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_models: str = "tinyllama,phi3,llama3"
 
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection: str = "reply_patterns"
+
+    # Reply coaching speed: skip Gemini analyze (tone is user-picked; intent uses rules).
+    skip_llm_analyze: bool = True
+    preload_embeddings: bool = True
 
 
 settings = Settings()

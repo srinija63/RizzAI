@@ -19,6 +19,10 @@ from fastapi.responses import JSONResponse
 from routes.analyze import router as analyze_router
 from routes.chat import router as chat_router
 from routes.health import router as health_router
+from routes.vision import router as vision_router
+from routes.writing import router as writing_router
+from services.config import settings
+from services.embeddings import preload_embeddings
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -39,6 +43,16 @@ logger = logging.getLogger("rizzai.main")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("CharmAI backend starting up")
+    if settings.preload_embeddings:
+        try:
+            preload_embeddings()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Embedding preload failed (%s) — will load on first RAG request", exc)
+    logger.info(
+        "Reply pipeline: skip_llm_analyze=%s preload_embeddings=%s",
+        settings.skip_llm_analyze,
+        settings.preload_embeddings,
+    )
     yield
     logger.info("CharmAI backend shutting down")
 
@@ -123,6 +137,8 @@ async def _unhandled_exception_handler(_request: Request, exc: Exception) -> JSO
 app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(analyze_router)
+app.include_router(vision_router)
+app.include_router(writing_router)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +155,9 @@ async def root():
         "endpoints": [
             "POST /api/reply",
             "POST /api/analyze",
+            "POST /api/extract-from-image",
+            "POST /api/openers",
+            "POST /api/bio",
             "GET  /health",
         ],
     }

@@ -1,7 +1,9 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import { MotiView } from 'moti';
 
+import { motionSpring } from '../../theme/motion';
 import { premiumTheme } from '../../theme/premium';
 
 type GradientButtonProps = {
@@ -19,38 +21,41 @@ export function GradientButton({
   style,
   icon,
 }: GradientButtonProps) {
+  const [pressed, setPressed] = useState(false);
+
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        style,
-        styles.wrapper,
-        pressed && styles.wrapperPressed,
-        disabled && styles.disabled,
-      ]}
+    <MotiView
+      animate={{ scale: disabled ? 1 : pressed ? 0.97 : 1 }}
+      transition={motionSpring.snappy}
+      style={style}
     >
-      {({ pressed }) => (
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
+        style={[styles.hit, disabled && styles.disabledHit]}
+      >
         <LinearGradient
           colors={premiumTheme.gradients.button}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={[styles.gradient, pressed && styles.gradientGlow]}
+          style={[styles.gradient, pressed && !disabled && styles.gradientGlow]}
         >
           {icon}
           <Text style={styles.text}>{label}</Text>
         </LinearGradient>
-      )}
-    </Pressable>
+      </Pressable>
+    </MotiView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
-    transform: [{ scale: 1 }],
+  hit: {
+    borderRadius: premiumTheme.radius.button,
   },
-  wrapperPressed: {
-    transform: [{ scale: 0.96 }],
+  disabledHit: {
+    opacity: 0.58,
   },
   gradient: {
     borderRadius: premiumTheme.radius.button,
@@ -75,8 +80,5 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-  },
-  disabled: {
-    opacity: 0.6,
   },
 });

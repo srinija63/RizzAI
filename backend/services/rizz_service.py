@@ -1,4 +1,4 @@
-"""Generate dating replies using RAG + OpenAI-compatible chat API."""
+"""Generate dating replies using RAG + Gemini/Ollama LLM providers."""
 
 import json
 import logging
@@ -7,7 +7,14 @@ from collections import Counter
 from typing import Any
 
 from services.config import settings
-from services.llm_service import generate_replies, get_last_provider_name
+from services.llm_service import (
+    generate_replies,
+    generate_text,
+    get_last_provider_name,
+    pad_unique_replies,
+    parse_reply_content,
+    _is_json_artifact,
+)
 from services.rag_service import retrieve_patterns
 
 logger = logging.getLogger("rizzai.rag")
@@ -49,10 +56,49 @@ _MICRO_TOKENS = frozenset(
 _REPEATED_MIN_LINES = 4
 _REPEATED_MIN_REPEAT_RATIO = 0.75
 _REPEATED_MIN_WORD_REPS = 6  # e.g. "lol lol lol lol lol lol"
-_MAX_REPLY_WORDS = 16
-_SIMILARITY_REWRITE_THRESHOLD = 0.72
+_MAX_REPLY_WORDS = 52
+_SIMILARITY_REWRITE_THRESHOLD = 0.58
 _LOG_INPUT_PREVIEW_CHARS = 400
-_MAX_REPLY_LINES = 2
+_MAX_REPLY_LINES = 4
+_GENERIC_PHRASES = (
+    "what are you up to",
+    "how's your day",
+    "how is your day",
+    "tell me more about you",
+    "tell me about yourself",
+    "you seem cool",
+    "you seem nice",
+    "keep chatting",
+    "want to keep chatting",
+    "i like your energy",
+    "love your energy",
+    "low-key curious",
+    "one fun detail",
+    "coffee person or tea",
+    "what should i know",
+    "nice, keeping it simple",
+    "good vibes",
+    "how are you doing",
+    "what are you into",
+    "want to get to know you",
+)
+_STYLE_GUIDANCE = {
+    "funny": "Playful teasing + witty, light humor.",
+    "calm": "Relaxed, emotionally steady, low-pressure phrasing.",
+    "bold": "Confident, direct, assertive (without arrogance).",
+    "romantic": "Warm, expressive, slightly deeper emotional connection.",
+    "simple": "Concise, natural, low-fluff language.",
+}
+
+
+def _is_generic_reply(reply: str) -> bool:
+    """Detect vague dating-app filler that ignores conversation specifics."""
+    t = reply.lower()
+    return any(phrase in t for phrase in _GENERIC_PHRASES)
+
+
+def _generic_reply_count(replies: list[str]) -> int:
+    return sum(1 for r in replies if _is_generic_reply(r))
 
 
 def _is_unsafe_text(text: str) -> bool:
@@ -301,6 +347,7 @@ def _diversify_replies(
     replies: list[str],
     labels: list[str],
     tone: str,
+    reply_count: int = 5,
 ) -> tuple[list[str], list[str]]:
     """
     Reduce repetitive outputs while preserving meaning and tone.
@@ -340,11 +387,13 @@ def _diversify_replies(
         diversified_labels.append(label)
         used_starters.add(starter)
 
-    while len(diversified) < 5:
-        diversified.append("Tell me one detail and I can make this more specific.")
-        diversified_labels.append("safe")
+    n = max(3, min(12, int(reply_count)))
+    if len(diversified) < n:
+        diversified = pad_unique_replies(diversified, count=n)
+        while len(diversified_labels) < len(diversified):
+            diversified_labels.append("safe")
 
-    return diversified[:5], diversified_labels[:5]
+    return diversified[:n], diversified_labels[:n]
 
 
 def _tone_score(reply: str, label: str, tone: str) -> float:
@@ -378,6 +427,8 @@ def _naturalness_score(reply: str) -> float:
         score -= 0.35
     if any(token in text.lower() for token in ("based on this vibe", "you could say", "as an ai")):
         score -= 0.5
+    if _is_generic_reply(text):
+        score -= 0.45
     if "  " in text:
         score -= 0.1
     if re.search(r"[A-Z]{5,}", text):
@@ -459,14 +510,16 @@ def _post_generation_validate(
     replies: list[str],
     labels: list[str],
     tone: str,
+    reply_count: int = 5,
 ) -> tuple[list[str], list[str], bool]:
     """
     Simple final validation:
-    - exactly 5 replies
+    - exactly reply_count replies
     - remove duplicates / near-duplicates
-    - cap each reply to 1-2 lines
+    - cap each reply to a few lines
     - trigger fallback if overall quality looks weak
     """
+    rc = max(3, min(12, int(reply_count)))
     normalized_replies: list[str] = []
     normalized_labels: list[str] = []
 
@@ -474,7 +527,7 @@ def _post_generation_validate(
         trimmed = re.sub(r"\s+$", "", reply.strip())
         if not trimmed:
             continue
-        # Keep first 2 non-empty lines if model rambles.
+        # Keep first few non-empty lines if model rambles.
         lines = [ln.strip() for ln in trimmed.splitlines() if ln.strip()]
         if len(lines) > _MAX_REPLY_LINES:
             trimmed = "\n".join(lines[:_MAX_REPLY_LINES])
@@ -499,21 +552,52 @@ def _post_generation_validate(
             unique_replies.append(reply)
             unique_labels.append(label)
 
-    unique_replies, unique_labels = _normalize_output(unique_replies, unique_labels, tone)
-    unique_replies, unique_labels = _diversify_replies(unique_replies, unique_labels, tone)
+    if len(unique_replies) < rc:
+        unique_replies = pad_unique_replies(unique_replies, count=rc)
+        while len(unique_labels) < len(unique_replies):
+            unique_labels.append(tone.lower() if tone.lower() in {"playful", "bold", "safe", "smooth"} else "safe")
+
+    unique_replies, unique_labels = _normalize_output(
+        unique_replies, unique_labels, tone, reply_count=rc
+    )
+    unique_replies, unique_labels = _diversify_replies(
+        unique_replies, unique_labels, tone, reply_count=rc
+    )
     unique_replies, unique_labels = _rank_replies(unique_replies, unique_labels, tone)
+    unique_replies = pad_unique_replies(unique_replies, count=rc)
+    unique_labels = unique_labels[: len(unique_replies)]
+    while len(unique_labels) < len(unique_replies):
+        unique_labels.append("safe")
 
     low_quality = False
     if any(not r.strip() for r in unique_replies):
         low_quality = True
-    if len(set(r.lower() for r in unique_replies)) < 3:
+    min_distinct = rc if rc <= 3 else max(3, min(4, rc // 2))
+    if len(set(r.lower() for r in unique_replies)) < min_distinct:
         low_quality = True
     if all(len(_reply_tokens(r)) < 3 for r in unique_replies):
         low_quality = True
     if any(_line_count(r) > _MAX_REPLY_LINES for r in unique_replies):
         low_quality = True
+    if _generic_reply_count(unique_replies) >= max(1, rc - 1):
+        low_quality = True
 
     return unique_replies, unique_labels, low_quality
+
+
+def _finalize_replies(
+    replies: list[str],
+    labels: list[str],
+    tone: str,
+    *,
+    reply_count: int,
+) -> tuple[list[str], list[str], bool]:
+    """Normalize, diversify, rank, and validate a reply batch."""
+    rc = max(3, min(12, int(reply_count)))
+    out_replies, out_labels = _normalize_output(replies, labels, tone, reply_count=rc)
+    out_replies, out_labels = _diversify_replies(out_replies, out_labels, tone, reply_count=rc)
+    out_replies, out_labels = _rank_replies(out_replies, out_labels, tone)
+    return _post_generation_validate(out_replies, out_labels, tone, reply_count=rc)
 
 
 def _safe_redirect_replies(tone: str) -> tuple[list[str], list[str], str]:
@@ -553,7 +637,7 @@ def _mock_rag_replies(
             f"Little {soft_tone} reset: was that a playful maybe or a polite maybe?",
         ],
         ["safe", "playful", "smooth", "safe", "bold"],
-        "Mock mode with RAG context: set OPENAI_API_KEY for full model generation.",
+        "Mock mode with RAG context: set GEMINI_API_KEY (or run Ollama) for full model generation.",
     )
 
 
@@ -562,6 +646,8 @@ def _build_prompt(
     tone: str,
     user_style: str,
     examples: list[dict[str, Any]],
+    reply_count: int = 5,
+    confidence_level: str = "medium",
 ) -> str:
     """Build grounded user prompt for the model."""
     formatted_examples = []
@@ -573,25 +659,64 @@ def _build_prompt(
             )
         )
     examples_block = "\n\n".join(formatted_examples) if formatted_examples else "No examples available."
+    n = max(3, min(12, int(reply_count)))
+    cl = (confidence_level or "medium").lower().strip()
+    if cl not in {"low", "medium", "high"}:
+        cl = "medium"
+    confidence_notes = {
+        "low": (
+            "Confidence energy: LOW — keep wording soft and low-pressure, more hedging is fine, "
+            "avoid sounding forward or intense."
+        ),
+        "medium": (
+            "Confidence energy: MEDIUM — balanced: clear and warm without being timid or overwhelming."
+        ),
+        "high": (
+            "Confidence energy: HIGH — more direct and assertive framing, still respectful and never pushy; "
+            "no desperation or neediness."
+        ),
+    }
+    conf_block = confidence_notes[cl]
+    angles = [
+        "callback — quote or riff on something specific they said",
+        "curious question — ask about one concrete detail they mentioned",
+        "playful tease — light joke tied to the chat, not a generic pickup line",
+        "warm statement — genuine reaction plus a small invite to continue",
+        "direct move — clear next step or opinion tied to the thread",
+        "hypothesis — playful guess about them based on one profile/chat detail",
+    ]
+    angle_lines = "\n".join(
+        f"  - Reply {i + 1}: {angles[i % len(angles)]}" for i in range(n)
+    )
+    style_line = (
+        f"User style notes: {user_style.strip()}\n\n" if (user_style or "").strip() else ""
+    )
     return (
         f"User conversation:\n{conversation_text}\n\n"
-        f"Selected tone: {tone}\n\n"
-        f"User style: {user_style}\n\n"
+        f"Selected tone (user chose — do not change): {tone}\n\n"
+        f"{style_line}"
+        f"{conf_block}\n\n"
         f"Retrieved examples:\n{examples_block}\n\n"
-        "Return valid JSON with this exact format:\n"
-        '{"replies":["...","...","...","...","..."],"labels":["playful","bold","safe","smooth","playful"]}\n'
+        "Return valid JSON with keys: replies (array of strings), labels (array of strings).\n"
+        f"- The replies array must contain exactly {n} strings; labels must be the same length.\n"
+        f"- Quality over quantity: all {n} replies must be clearly different from each other.\n"
+        "Required angles (each reply must follow its assigned angle — no duplicates):\n"
+        f"{angle_lines}\n"
         "Rules:\n"
         "- If the conversation contains a marked 'Most recent' section, base replies mainly on that part.\n"
-        "- Exactly 5 replies.\n"
-        "- Each reply: short, natural, witty, respectful.\n"
-        "- Keep each reply under 16 words.\n"
-        "- Make each reply meaningfully different (different intent or angle).\n"
+        "- Each reply: natural, witty, respectful.\n"
+        "- Length should fit the situation: keep dry contexts short, but when needed use up to 3 short sentences.\n"
+        "- Each reply MUST reference at least one concrete detail from the conversation "
+        "(topic, word, joke, plan, place, typo, or emoji context).\n"
         "- Vary sentence structure: mix question, statement, and light invite formats.\n"
-        "- Subtly vary within the selected tone; do not make all 5 lines sound identical.\n"
+        f"- Subtly vary within the selected tone; do not make all {n} lines sound identical.\n"
         "- Do NOT copy any retrieved example wording. Paraphrase and create fresh lines.\n"
         "- Sound like a real text message, not an advisor or narrator.\n"
         "- Avoid meta phrasing like 'based on this vibe' or 'you could say'.\n"
-        "- Avoid repeating the same opener across replies.\n"
+        "- Avoid generic filler: 'what are you up to', 'tell me about yourself', 'you seem cool', "
+        "'how's your day', 'keep chatting', 'I like your energy'.\n"
+        "- Avoid repeating the same opener, phrase, or sentence structure across replies.\n"
+        "- Every reply must be meaningfully different — no copy-paste with tiny edits.\n"
         "- Safety policy: avoid explicit sexual content, manipulation, pressure, harassment, stalking, deception, or pushy dating advice.\n"
         "- If the user asks for unsafe behavior, refuse that direction and rewrite into respectful, consent-aware alternatives.\n"
         "- Labels must be from: playful, bold, safe, smooth.\n"
@@ -601,53 +726,35 @@ def _build_prompt(
 
 def _parse_llm_output(content: str) -> tuple[list[str], list[str]]:
     """Parse model output into replies and labels."""
-    try:
-        parsed = json.loads(content)
-        if isinstance(parsed, dict):
-            replies = [str(x).strip() for x in parsed.get("replies", []) if str(x).strip()]
-            labels = [str(x).strip().lower() for x in parsed.get("labels", []) if str(x).strip()]
-            if replies:
-                return replies, labels
-    except json.JSONDecodeError:
-        pass
-
-    replies: list[str] = []
-    labels: list[str] = []
-    for line in content.split("\n"):
-        clean = re.sub(r"^[-*\d.)\s]+", "", line).strip()
-        if not clean:
-            continue
-        match = re.match(r"^\[(playful|bold|safe|smooth)\]\s*(.+)$", clean, flags=re.I)
-        if match:
-            labels.append(match.group(1).lower())
-            replies.append(match.group(2).strip())
-        else:
-            replies.append(clean)
-    return replies, labels
+    return parse_reply_content(content)
 
 
 def _normalize_output(
     replies: list[str],
     labels: list[str],
     tone: str,
+    reply_count: int = 5,
 ) -> tuple[list[str], list[str]]:
-    """Ensure exactly 5 replies and aligned labels."""
+    """Ensure exactly reply_count replies and aligned labels."""
+    n = max(3, min(12, int(reply_count)))
     allowed = {"playful", "bold", "safe", "smooth"}
-    cleaned_replies = [r.strip().strip('"') for r in replies if r.strip()]
+    cleaned_replies = [
+        r.strip().strip('"')
+        for r in replies
+        if r.strip() and not _is_json_artifact(r)
+    ]
     cleaned_labels = [l.lower() for l in labels if l.lower() in allowed]
 
-    while len(cleaned_replies) < 5:
-        cleaned_replies.append("Tell me a bit more and I can tailor this better.")
-    cleaned_replies = cleaned_replies[:5]
+    cleaned_replies = pad_unique_replies(cleaned_replies, count=n)
 
-    if len(cleaned_labels) < 5:
+    if len(cleaned_labels) < n:
         fallback_cycle = [tone.lower(), "safe", "smooth", "playful", "bold"]
         for label in fallback_cycle:
-            if label in allowed and len(cleaned_labels) < 5:
+            if label in allowed and len(cleaned_labels) < n:
                 cleaned_labels.append(label)
-            elif len(cleaned_labels) < 5:
+            elif len(cleaned_labels) < n:
                 cleaned_labels.append("safe")
-    cleaned_labels = cleaned_labels[:5]
+    cleaned_labels = cleaned_labels[:n]
     return cleaned_replies, cleaned_labels
 
 
@@ -674,10 +781,16 @@ async def generate_rag_replies(
     conversation_text: str,
     tone: str,
     user_style: str = "calm",
+    reply_count: int = 5,
+    confidence_level: str = "medium",
 ) -> dict[str, Any]:
     """Generate RAG-grounded replies and include retrieval context."""
     selected_tone = (tone or "playful").strip() or "playful"
-    style = (user_style or "calm").strip() or "calm"
+    style = (user_style or "").strip()
+    conf = (confidence_level or "medium").strip().lower()
+    if conf not in {"low", "medium", "high"}:
+        conf = "medium"
+    rc = max(3, min(12, int(reply_count)))
 
     normalized = _normalize_whitespace(conversation_text or "")
     _log_rag_event(
@@ -688,7 +801,7 @@ async def generate_rag_replies(
 
     if not normalized:
         bundle = _edge_case_bundle(selected_tone, "empty")
-        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone, reply_count=rc)
         r, lab = _rank_replies(r, lab, selected_tone)
         _log_rag_event(
             stage="edge_case_empty",
@@ -718,7 +831,7 @@ async def generate_rag_replies(
 
     if _is_mostly_repeated_lines(normalized):
         bundle = _edge_case_bundle(selected_tone, "repeated")
-        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone, reply_count=rc)
         r, lab = _rank_replies(r, lab, selected_tone)
         _log_rag_event(
             stage="edge_case_repeated",
@@ -731,7 +844,7 @@ async def generate_rag_replies(
 
     if _is_micro_input(normalized):
         bundle = _edge_case_bundle(selected_tone, "micro", micro_snippet=normalized)
-        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone)
+        r, lab = _normalize_output(bundle["replies"], bundle["labels"], selected_tone, reply_count=rc)
         r, lab = _rank_replies(r, lab, selected_tone)
         _log_rag_event(
             stage="edge_case_micro",
@@ -754,57 +867,56 @@ async def generate_rag_replies(
         examples = []
     retrieved_ids = [str(x.get("id")) for x in examples if x.get("id")]
 
-    if not settings.openai_api_key:
-        replies, labels, note = _mock_rag_replies(
-            conversation_text=work_text,
-            tone=selected_tone,
-            user_style=style,
-            examples=examples,
-        )
-        replies, labels = _normalize_output(replies, labels, selected_tone)
-        replies, labels = _diversify_replies(replies, labels, selected_tone)
-        replies, labels = _rank_replies(replies, labels, selected_tone)
-        replies, labels, low_quality = _post_generation_validate(replies, labels, selected_tone)
-        if low_quality:
-            replies, labels, note = _mock_rag_replies(
-                conversation_text=work_text,
-                tone=selected_tone,
-                user_style=style,
-                examples=examples,
-            )
-            replies, labels, _ = _post_generation_validate(replies, labels, selected_tone)
-            note = _merge_notes(note, "Low-quality output detected; switched to mock fallback.")
-        merged_note = _merge_notes(long_note, note)
-        _log_rag_event(
-            stage="mock_generation",
-            conversation_text=work_text,
-            tone=selected_tone,
-            retrieved_ids=retrieved_ids,
-            replies=replies,
-            note=merged_note,
-        )
-        return {
-            "inspiration_examples": examples,
-            "replies": replies,
-            "labels": labels,
-            "note": merged_note,
-            "provider_used": "mock",
-        }
-
     prompt = _build_prompt(
         conversation_text=work_text,
         tone=selected_tone,
         user_style=style,
         examples=examples,
+        reply_count=rc,
+        confidence_level=conf,
     )
-    replies = generate_replies(prompt)
+    raw_llm = generate_text(prompt, max_tokens=1200)
     provider_name = get_last_provider_name()
+    replies, labels = _parse_llm_output(raw_llm)
+    if not replies:
+        replies = generate_replies(
+            prompt,
+            conversation_text=work_text,
+            tone=selected_tone,
+            user_style=style,
+            reply_count=rc,
+        )
+        labels = []
     logger.info("[LLM] provider=%s  replies_raw=%d", provider_name, len(replies))
-    labels = []
-    replies, labels = _normalize_output(replies, labels, selected_tone)
-    replies, labels = _diversify_replies(replies, labels, selected_tone)
-    replies, labels = _rank_replies(replies, labels, selected_tone)
-    replies, labels, low_quality = _post_generation_validate(replies, labels, selected_tone)
+    replies, labels, low_quality = _finalize_replies(
+        replies, labels, selected_tone, reply_count=rc
+    )
+    if low_quality:
+        retry_prompt = (
+            f"{prompt}\n\n"
+            "RETRY — previous replies were too vague or generic. "
+            f"Write exactly {rc} replies. Each must hook to a specific detail from the conversation "
+            "(topic, phrase, joke, plan, place, or emoji). "
+            "Never use filler like 'what are you up to', 'tell me about yourself', "
+            "'you seem cool', 'how's your day', or 'keep chatting'."
+        )
+        retry_raw_text = generate_text(retry_prompt, max_tokens=1200)
+        retry_replies, retry_labels = _parse_llm_output(retry_raw_text)
+        if not retry_replies:
+            retry_replies = generate_replies(
+                retry_prompt,
+                conversation_text=work_text,
+                tone=selected_tone,
+                user_style=style,
+                reply_count=rc,
+            )
+            retry_labels = []
+        replies, labels, low_quality = _finalize_replies(
+            retry_replies, retry_labels, selected_tone, reply_count=rc
+        )
+        provider_name = get_last_provider_name()
+        logger.info("[LLM] retry provider=%s", provider_name)
+
     if low_quality:
         replies, labels, mock_note = _mock_rag_replies(
             conversation_text=work_text,
@@ -812,7 +924,7 @@ async def generate_rag_replies(
             user_style=style,
             examples=examples,
         )
-        replies, labels, _ = _post_generation_validate(replies, labels, selected_tone)
+        replies, labels, _ = _finalize_replies(replies, labels, selected_tone, reply_count=rc)
         rag_note = _merge_notes(
             "Low-quality output detected; switched to mock fallback.",
             None if examples else "RAG note: no retrieved examples found, generated from base instructions.",

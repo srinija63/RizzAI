@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 _MAX_TEXT_CHARS = 4000
 _VALID_TONES = {"funny", "flirty", "confident", "direct", "sweet", "playful"}
 _VALID_STYLES = {"calm", "bold", "casual", "warm", "witty"}
+_VALID_CONFIDENCE = {"low", "medium", "high"}
 
 
 # ---------------------------------------------------------------------------
@@ -82,14 +83,17 @@ class ReplyRequest(BaseModel):
         ...,
         description="The conversation or message you want to respond to.",
     )
-    tone: str | None = Field(
-        default=None,
-        description="Preferred reply tone. One of: funny | flirty | confident | direct | sweet | playful. "
-                    "If omitted, the analyzer's suggested tone is used.",
+    tone: str = Field(
+        ...,
+        description="User-selected reply tone: funny | flirty | confident | direct (required).",
     )
     user_style: str | None = Field(
-        default="calm",
-        description="Your personal communication style: calm | bold | casual | warm | witty.",
+        default=None,
+        description="Optional personal style: calm | bold | casual | warm | witty.",
+    )
+    confidence_level: str = Field(
+        ...,
+        description="User-selected confidence: low | medium | high (required).",
     )
     analysis_debug: bool = Field(
         default=False,
@@ -98,6 +102,12 @@ class ReplyRequest(BaseModel):
     retrieval_debug: bool = Field(
         default=False,
         description="Include RAG retrieval explainability payload in the response.",
+    )
+    reply_count: int = Field(
+        default=3,
+        ge=3,
+        le=12,
+        description="How many distinct reply suggestions to generate and rank (default 3; max 12).",
     )
 
     @field_validator("conversation_text")
@@ -113,12 +123,15 @@ class ReplyRequest(BaseModel):
 
     @field_validator("tone")
     @classmethod
-    def _validate_tone(cls, v: str | None) -> str | None:
-        if v is not None and v.lower() not in _VALID_TONES:
+    def _validate_tone(cls, v: str) -> str:
+        t = (v or "").strip().lower()
+        if not t:
+            raise ValueError("tone is required — pick funny, flirty, confident, or direct.")
+        if t not in _VALID_TONES:
             raise ValueError(
                 f"Invalid tone {v!r}. Choose from: {', '.join(sorted(_VALID_TONES))}."
             )
-        return v.lower() if v else v
+        return t
 
     @field_validator("user_style")
     @classmethod
@@ -128,6 +141,18 @@ class ReplyRequest(BaseModel):
                 f"Invalid user_style {v!r}. Choose from: {', '.join(sorted(_VALID_STYLES))}."
             )
         return v.lower() if v else v
+
+    @field_validator("confidence_level")
+    @classmethod
+    def _validate_confidence(cls, v: str) -> str:
+        c = (v or "").strip().lower()
+        if not c:
+            raise ValueError("confidence_level is required — pick low, medium, or high.")
+        if c not in _VALID_CONFIDENCE:
+            raise ValueError(
+                f"Invalid confidence_level {v!r}. Choose from: {', '.join(sorted(_VALID_CONFIDENCE))}."
+            )
+        return c
 
 
 class ReplyResponse(BaseModel):
@@ -148,7 +173,7 @@ class ReplyResponse(BaseModel):
     )
     provider_used: str | None = Field(
         default=None,
-        description="LLM provider: openai | ollama:<model> | mock. Present when retrieval_debug=true.",
+        description="LLM provider: gemini | ollama:<model> | mock. Present when retrieval_debug=true.",
     )
     retrieval_debug: list[RetrievalDebugItem] | None = Field(
         default=None,
@@ -194,6 +219,146 @@ class AnalyzeRequest(BaseModel):
                 f"conversation_text too long — max {_MAX_TEXT_CHARS} characters."
             )
         return stripped
+
+
+# ---------------------------------------------------------------------------
+# /api/extract-from-image
+# ---------------------------------------------------------------------------
+
+_MAX_IMAGE_BASE64_CHARS = 6_000_000
+_VALID_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+
+
+class ExtractFromImageRequest(BaseModel):
+    """Screenshot → conversation text (vision). Requires GEMINI_API_KEY on the server."""
+
+    image_base64: str = Field(
+        ...,
+        description="Base64-encoded image bytes (no data: URL prefix required).",
+    )
+    mime_type: str = Field(
+        default="image/jpeg",
+        description="MIME type of the image: image/jpeg | image/png | image/webp.",
+    )
+
+    @field_validator("mime_type")
+    @classmethod
+    def _normalize_mime(cls, v: str) -> str:
+        m = (v or "image/jpeg").strip().lower()
+        if m == "image/jpg":
+            m = "image/jpeg"
+        if m not in _VALID_IMAGE_MIME:
+            raise ValueError(
+                f"mime_type must be one of: {', '.join(sorted(_VALID_IMAGE_MIME))}."
+            )
+        return m
+
+    @field_validator("image_base64")
+    @classmethod
+    def _validate_b64(cls, v: str) -> str:
+        s = (v or "").strip()
+        if s.startswith("data:"):
+            comma = s.find(",")
+            if comma != -1:
+                s = s[comma + 1 :].strip()
+        if not s:
+            raise ValueError("image_base64 cannot be empty.")
+        if len(s) > _MAX_IMAGE_BASE64_CHARS:
+            raise ValueError(
+                f"image_base64 too large — max {_MAX_IMAGE_BASE64_CHARS} characters."
+            )
+        return s
+
+
+class ExtractFromImageResponse(BaseModel):
+    conversation_text: str = Field(description="Plain text extracted from the screenshot.")
+    warning: str | None = Field(default=None, description="Non-fatal notice from the extractor.")
+
+
+# ---------------------------------------------------------------------------
+# /api/openers, /api/bio
+# ---------------------------------------------------------------------------
+
+_MAX_PROFILE_CHARS = 2800
+_VALID_OPENER_TONES = {"funny", "flirty", "confident", "direct"}
+_VALID_BIO_TEMPLATES = {
+    "witty_minimal",
+    "warm_story",
+    "bold_confident",
+    "playful",
+    "authentic_soft",
+}
+
+
+class OpenerRequest(BaseModel):
+    """First-message openers from a dating profile description."""
+
+    profile_description: str = Field(..., description="Profile text, prompts, or bullet facts about the person.")
+    tone: str = Field(..., description="funny | flirty | confident | direct")
+    count: int = Field(default=6, ge=3, le=10, description="How many distinct openers to return.")
+
+    @field_validator("profile_description")
+    @classmethod
+    def _strip_profile(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("profile_description cannot be empty.")
+        if len(s) > _MAX_PROFILE_CHARS:
+            raise ValueError(f"profile_description too long — max {_MAX_PROFILE_CHARS} characters.")
+        return s
+
+    @field_validator("tone")
+    @classmethod
+    def _tone(cls, v: str) -> str:
+        t = (v or "").strip().lower()
+        if t not in _VALID_OPENER_TONES:
+            raise ValueError(
+                f"Invalid tone {v!r}. Choose from: {', '.join(sorted(_VALID_OPENER_TONES))}."
+            )
+        return t
+
+
+class OpenerResponse(BaseModel):
+    openers: list[str] = Field(description="Suggested first messages / openers.")
+    provider_used: str | None = Field(default=None, description="gemini | ollama:<model> | mock")
+
+
+class BioRequest(BaseModel):
+    """Dating app bio variants from rough notes or facts."""
+
+    about_text: str = Field(..., description="Rough notes, interests, voice, or bullets to shape into a bio.")
+    style_template: str = Field(
+        ...,
+        description=(
+            "Bio style: witty_minimal | warm_story | bold_confident | playful | authentic_soft"
+        ),
+    )
+    variant_count: int = Field(default=3, ge=1, le=5, description="How many bio variants to return.")
+
+    @field_validator("about_text")
+    @classmethod
+    def _about(cls, v: str) -> str:
+        s = (v or "").strip()
+        if not s:
+            raise ValueError("about_text cannot be empty.")
+        if len(s) > _MAX_PROFILE_CHARS:
+            raise ValueError(f"about_text too long — max {_MAX_PROFILE_CHARS} characters.")
+        return s
+
+    @field_validator("style_template")
+    @classmethod
+    def _tpl(cls, v: str) -> str:
+        t = (v or "").strip().lower()
+        if t not in _VALID_BIO_TEMPLATES:
+            raise ValueError(
+                f"Invalid style_template {v!r}. Choose from: {', '.join(sorted(_VALID_BIO_TEMPLATES))}."
+            )
+        return t
+
+
+class BioResponse(BaseModel):
+    bios: list[str] = Field(description="Ready-to-paste bio variants.")
+    provider_used: str | None = Field(default=None, description="gemini | ollama:<model> | mock")
 
 
 # ---------------------------------------------------------------------------

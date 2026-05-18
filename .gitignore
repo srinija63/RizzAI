@@ -13,3 +13,14 @@ frontend/node_modules/
 
 # Local env files
 backend/.env
+
+# Expo
+.expo/
+
+# Stitch fetch temp files
+frontend/stitch/tmp-*
+frontend/stitch/api-*.json
+frontend/stitch/mcp-*.json
+
+# Root accidental lockfile
+/package-lock.json

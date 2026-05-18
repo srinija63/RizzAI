@@ -1,4 +1,13 @@
+export * from './AiThinkingIndicator';
+export * from './AmbientOrbsBackground';
 export * from './AnimatedInput';
+export { default as AnimatedShaderHero } from './animated-shader-hero';
 export * from './FloatingCard';
 export * from './GlassCard';
 export * from './GradientButton';
+export * from './SparkTonePersonaPicker';
+export * from './BioStylePersonaPicker';
+export * from './RizzHomeActionTile';
+export * from './RizzAbstractSplashBackground';
+export * from './RizzLogoMark';
+export * from './RizzWireframeHeartIcon';

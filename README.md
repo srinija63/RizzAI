@@ -1,179 +1,160 @@
-# RizzAI — Advanced AI Dating Assistant
+# RizzAI (CharmAI)
 
-RizzAI is a beginner-friendly full-stack project with:
+AI dating assistant — **Expo React Native** frontend + **FastAPI** backend. Generate context-aware replies, profile openers, and bios with optional RAG grounding and ranked suggestions.
 
-- `frontend/`: Expo React Native app (TypeScript)
-- `backend/`: FastAPI API (Python)
+## Features
 
-## Project Structure
+| Screen | What it does |
+|--------|----------------|
+| **Intro** | Vibrant splash → Get Started |
+| **Home** | Hub for all tools |
+| **Reply coaching** | Pick **tone** + **confidence** (nothing auto-selected) → paste chat or import screenshot → **3 unique** ranked replies |
+| **Opener generator** | Paste their profile → pick tone → first messages grounded in their details |
+| **Bio writer** | Your rough notes → pick style template → paste-ready bio variants |
+
+### Reply coaching highlights
+
+- **3 replies** per request — distinct angles, tied to the conversation
+- User-chosen **tone**: witty, flirty, bold, direct
+- User-chosen **confidence**: soft, balanced, bold
+- Optional **Explainability Mode** (retrieval + ranking debug on results)
+- Screenshot → text via Gemini vision (`POST /api/extract-from-image`)
+
+## Tech stack
+
+- **Frontend:** Expo 54, React Native, TypeScript, Moti, Tamagui, NativeWind
+- **Backend:** FastAPI, Pydantic, LangChain + ChromaDB (RAG)
+- **LLM chain:** Gemini → Ollama → mock fallback (app stays usable offline)
+- **Embeddings:** Local `sentence-transformers` (no OpenAI key required for RAG)
+
+## Project structure
 
 ```text
 RizzAI/
-  frontend/   # Expo + React Native + TypeScript
-  backend/    # FastAPI server
+  frontend/          # Expo app
+    src/screens/     # HeroIntro, Home, ReplySetup, ChatInput, ReplyResults, …
+    src/services/    # api.ts — backend client
+    assets/          # rizz-logo.png, splash reference
+    stitch/          # Stitch design refs + fetch scripts
+  backend/
+    main.py          # FastAPI entry
+    routes/          # chat, analyze, vision, writing, health
+    services/        # llm, rizz (RAG), ranking, writing
+    data/            # reply_patterns.json
+    scripts/ingest.py
 ```
 
-## Backend Setup (FastAPI)
+## Quick start
 
-1. Open a terminal in:
-   `c:\Users\Lenovo\Desktop\RizzAI\backend`
-2. Create and activate a virtual environment:
-
-   - Windows PowerShell:
-     ```powershell
-     python -m venv .venv
-     .\.venv\Scripts\Activate.ps1
-     ```
-
-3. Install dependencies:
-
-   ```powershell
-   pip install -r requirements.txt
-   ```
-
-4. Create env file:
-
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-5. Run the server:
-
-   ```powershell
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
-6. Open API docs:
-   `http://127.0.0.1:8000/docs`
-
-### Backend Endpoints
-
-- `GET /health` → health check
-- `POST /api/reply` → generate reply suggestions
-
-#### `/api/reply` Retrieval Debug Mode (Explainability)
-
-Set `retrieval_debug: true` in the request body to include why patterns were retrieved.
-
-Example request:
-
-```json
-{
-  "message": "she said lol",
-  "tone": "flirty",
-  "retrieval_debug": true
-}
-```
-
-When enabled, response includes `retrieval_debug` items with:
-
-- `pattern_id`
-- `tone`
-- `situation`
-- `score`
-- `reason` (short explanation of boosts and ranking signals)
-
-This is useful for your Loom walkthrough because you can show:
-
-1. which examples were used as inspiration,
-2. how tone affected ranking,
-3. and why the final response is explainable instead of a black box.
-
-### Frontend Explainability Mode (Loom Demo)
-
-The app now includes an **Explainability Mode** toggle in the `Chat Input` screen.
-
-Demo flow for Loom:
-
-1. Enable **Explainability Mode**.
-2. Enter a prompt and generate replies.
-3. Open the `Reply Results` screen.
-4. Expand **Why these suggestions?** to show retrieval details:
-   - pattern ID
-   - tone
-   - situation
-   - relevance score
-   - ranking reason
-
-When Explainability Mode is off, these debug details stay hidden for a clean user UI.
-
-## RAG Pipeline (LangChain + ChromaDB)
-
-The backend now includes:
-
-- `backend/data/reply_patterns.json` (curated response patterns)
-- `backend/scripts/ingest.py` (JSON -> LangChain Documents -> ChromaDB)
-- `backend/services/rag_service.py` (retrieval utility)
-
-### RAG Dependencies
-
-Install backend dependencies (already includes LangChain + Chroma):
+### 1. Backend
 
 ```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Copy-Item .env.example .env
+# Edit .env — set GEMINI_API_KEY for real AI (optional: Ollama for local fallback)
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Run Ingestion
+API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-From `backend/`:
+### 2. RAG ingestion (optional, improves reply quality)
 
 ```powershell
+cd backend
 python scripts/ingest.py
 ```
 
-This will:
+Uses `LOCAL_EMBEDDING_MODEL` from `.env` and stores vectors in `./chroma_db`.
 
-- load `data/reply_patterns.json`
-- generate embeddings with your OpenAI-compatible provider
-- store vectors in `CHROMA_PERSIST_DIR` (default: `./chroma_db`)
-
-To append without deleting old vectors:
+### 3. Frontend
 
 ```powershell
-python scripts/ingest.py --no-reset
+cd frontend
+npm install
+npx expo start -c
 ```
 
-### Test Retrieval
+- **Phone:** same Wi‑Fi as PC → scan QR in Expo Go  
+- **Stuck connecting?** `npx expo start --tunnel -c`  
+- **Web:** press `w` (API uses `http://127.0.0.1:8000`)
 
-From `backend/`, run:
+Update the fallback LAN IP in `frontend/src/services/api.ts` (`MOBILE_LAN_API_BASE_URL`) if Expo cannot auto-detect your PC.
+
+## Environment variables
+
+Copy `backend/.env.example` → `backend/.env`:
+
+| Variable | Purpose |
+|----------|---------|
+| `GEMINI_API_KEY` | Primary LLM + screenshot OCR |
+| `GEMINI_MODEL` | Default `gemini-2.0-flash` |
+| `OLLAMA_BASE_URL` | Local fallback server |
+| `OLLAMA_MODELS` | Comma-separated model names |
+| `LOCAL_EMBEDDING_MODEL` | RAG embeddings (local) |
+| `CHROMA_PERSIST_DIR` | Vector DB path |
+| `CHROMA_COLLECTION` | Collection name |
+
+Without `GEMINI_API_KEY`, replies/openers/bios use **Ollama** if running, else **mock** suggestions.
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `POST` | `/api/reply` | Analyze + RAG + generate + rank **3** replies |
+| `POST` | `/api/analyze` | Conversation mood / intent |
+| `POST` | `/api/extract-from-image` | Screenshot → conversation text |
+| `POST` | `/api/openers` | Profile-grounded first messages |
+| `POST` | `/api/bio` | Bio variants from notes + style |
+
+### Example: `/api/reply`
+
+```json
+{
+  "conversation_text": "Them: lol that was random\nYou: fair",
+  "tone": "flirty",
+  "confidence_level": "medium",
+  "reply_count": 3,
+  "retrieval_debug": false
+}
+```
+
+`tone` and `confidence_level` are **required** (no server-side override). Default `reply_count` is **3** (min 3, max 12).
+
+With `retrieval_debug: true`, the response includes which RAG patterns influenced generation.
+
+## Stitch design assets
+
+Design reference project: **RizzAI Logo Screen** (`17404370540113652731`).
 
 ```powershell
-python -c "from services.rag_service import retrieve_patterns; import json; print(json.dumps(retrieve_patterns('She replied after two days and said hey stranger', 'playful', 5), indent=2))"
+cd frontend
+$env:STITCH_API_KEY = "your-key-from-stitch.withgoogle.com/settings"
+.\scripts\fetch-stitch-via-api.ps1 -ScreenId 048c3380cc92497c9042574ba7528e95 -ScreenSlug rizzai-abstract-logo -AssetName rizz-logo.png
+.\scripts\fetch-stitch-via-api.ps1 -ScreenId 4ce103cb2c2c4a209198af8b828a37d1 -ScreenSlug rizzai-vibrant-splash -AssetName rizz-splash-reference.png
 ```
 
-Expected output: top relevant examples with `id`, `tone`, `situation`, `content`, and `relevance_score`.
+See `frontend/stitch/DESIGN.md` for screen IDs.
 
-## Running the frontend
+## Explainability demo (Loom / portfolio)
 
-1. Open a terminal in:
-   `c:\Users\Lenovo\Desktop\RizzAI\frontend`
-2. Install dependencies:
+1. Enable **Explainability Mode** on the chat input screen.
+2. Generate replies after choosing tone + confidence.
+3. On results, expand **Why these suggestions?** to show pattern ID, tone, situation, score, and reason.
 
-   ```powershell
-   npm install
-   ```
+## Troubleshooting
 
-3. Recommended startup:
+| Issue | Fix |
+|-------|-----|
+| Expo cannot reach Metro | Same Wi‑Fi, firewall allows 8081, try `--tunnel` |
+| App cannot reach API | Backend on `0.0.0.0:8000`, correct LAN IP in `api.ts` |
+| Slow first reply | First run loads embedding model + LLM; wait or use Gemini |
+| Generic / repeated replies | Set `GEMINI_API_KEY`; restart backend after `.env` changes |
+| Openers ignore profile | Paste full profile text; pick tone before generate |
 
-   ```powershell
-   npx expo start --lan -c
-   ```
+## License
 
-4. Use Expo CLI shortcuts:
-   - scan QR with **Expo Go** (mobile)
-   - press `w` for web testing
-
-Notes:
-- Ensure phone and laptop are on the same Wi-Fi.
-- If Metro freezes or gets stuck, restart with `-c` again.
-- LAN mode is the default stable workflow for this project.
-
-## Notes
-
-- Frontend API base URL is configured in:
-  `frontend/src/services/api.ts`
-- For **web**, use localhost (`http://127.0.0.1:8000`).
-- For **mobile (Expo Go)**, use your laptop LAN IP (`http://<your-lan-ip>:8000`).
-- If `OPENAI_API_KEY` is not set, backend returns demo suggestions so the app still works.
-- For RAG ingestion/retrieval, set `OPENAI_API_KEY` in `backend/.env` (plus optional `OPENAI_BASE_URL` for compatible providers).
-# RizzAI
+Private / educational project — adjust as needed for your use case.

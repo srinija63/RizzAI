@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from uuid import uuid4
+
+from services.llm_service import pad_unique_replies
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -17,7 +20,8 @@ from schemas import (
     ResponseMeta,
     RetrievalDebugItem,
 )
-from services.analyzer_service import analyze_conversation
+from services.analyzer_service import analyze_conversation, analyze_conversation_fast
+from services.config import settings
 from services.llm_service import get_last_provider_name
 from services.ranking_service import rank_replies
 from services.rizz_service import generate_rag_replies
@@ -28,6 +32,7 @@ router = APIRouter(prefix="/api", tags=["reply"])
 
 # Labels assigned by position in the ranked list.
 _RANK_LABELS = ["smooth", "bold", "playful", "safe", "sweet"]
+_RANKING_TIMEOUT_SECONDS = 12
 
 # Safe fallback replies returned when the full pipeline fails.
 _FALLBACK_REPLIES = [
@@ -134,21 +139,29 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
         )
 
     logger.info(
-        "[Request %s] [reply] text=%r tone=%s style=%s debug=%s",
+        "[Request %s] [reply] text=%r tone=%s style=%s confidence=%s reply_count=%s debug=%s",
         request_id,
         body.conversation_text[:60],
         body.tone,
         body.user_style,
+        body.confidence_level,
+        body.reply_count,
         body.retrieval_debug,
     )
 
     # ── Step 1: Conversation analysis ────────────────────────────────────
     _t_step = time.perf_counter()
     try:
-        raw_analysis = analyze_conversation(
-            body.conversation_text,
-            analysis_debug=body.analysis_debug,
-        )
+        if settings.skip_llm_analyze:
+            raw_analysis = analyze_conversation_fast(
+                body.conversation_text,
+                analysis_debug=body.analysis_debug,
+            )
+        else:
+            raw_analysis = analyze_conversation(
+                body.conversation_text,
+                analysis_debug=body.analysis_debug,
+            )
         logger.info(
             "[Request %s] [Analyzer] mood=%s intent=%s interest=%s suggested_tone=%s",
             request_id,
@@ -169,21 +182,9 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
     _step_times["analyze"] = round((time.perf_counter() - _t_step) * 1000)
     analysis_out = _safe_analysis(raw_analysis)
 
-    # Resolve effective tone: user preference → analyzer suggestion → default
-    effective_tone = (
-        body.tone
-        or raw_analysis.get("suggested_tone")
-        or "playful"
-    )
-    # If conversation is dry/confused, avoid overly flirty tone
-    if (
-        raw_analysis.get("mood") in {"dry", "confused"}
-        and effective_tone in {"flirty", "funny"}
-        and not body.tone  # only override if user didn't explicitly choose
-    ):
-        effective_tone = raw_analysis.get("suggested_tone", "playful")
-
-    logger.info("[Request %s] [reply] effective_tone=%s", request_id, effective_tone)
+    # Tone and confidence come only from the user (Reply Setup screen).
+    effective_tone = body.tone
+    logger.info("[Request %s] [reply] user_tone=%s confidence=%s", request_id, effective_tone, body.confidence_level)
 
     # ── Step 2: Generate reply candidates ────────────────────────────────
     _t_step = time.perf_counter()
@@ -191,7 +192,9 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
         result = await generate_rag_replies(
             conversation_text=body.conversation_text,
             tone=effective_tone,
-            user_style=body.user_style or "calm",
+            user_style=body.user_style or "",
+            confidence_level=body.confidence_level,
+            reply_count=body.reply_count,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -245,7 +248,36 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
     intent = raw_analysis.get("intent", "")
     _t_step = time.perf_counter()
     try:
-        ranked = rank_replies(raw_replies, tone=effective_tone, intent=intent)
+        ranked = await asyncio.wait_for(
+            asyncio.to_thread(
+                rank_replies,
+                raw_replies,
+                tone=effective_tone,
+                intent=intent,
+                top_n=body.reply_count,
+            ),
+            timeout=_RANKING_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "[Request %s] [Ranking] timed out after %ss — using unranked order",
+            request_id,
+            _RANKING_TIMEOUT_SECONDS,
+        )
+        ranked = [
+            {
+                "reply": r,
+                "score": 7,
+                "metrics": {
+                    "naturalness": 7,
+                    "confidence": 7,
+                    "tone_match": 7,
+                    "respectfulness": 7,
+                },
+                "explanation": "Decent reply.",
+            }
+            for r in raw_replies[:body.reply_count]
+        ]
     except Exception as exc:  # noqa: BLE001
         logger.warning("[Request %s] [Ranking] failed (%s) — using unranked order", request_id, exc)
         # Fallback: wrap raw replies without scores
@@ -261,12 +293,38 @@ async def create_reply(body: ReplyRequest, request: Request) -> ReplyResponse:
                 },
                 "explanation": "Decent reply.",
             }
-            for r in raw_replies[:5]
+            for r in raw_replies[:body.reply_count]
         ]
 
     _steps.append("rank")
     _step_times["rank"] = round((time.perf_counter() - _t_step) * 1000)
     logger.info("[Request %s] [Ranking] completed top=%d intent=%s", request_id, len(ranked), intent or "-")
+
+    # Ensure we return the requested count with unique text (ranking may drop similar lines).
+    ranked_texts = [str(item.get("reply", "")).strip() for item in ranked if str(item.get("reply", "")).strip()]
+    if len(ranked_texts) < body.reply_count:
+        pool = pad_unique_replies(raw_replies + ranked_texts, count=body.reply_count)
+        seen = {t.lower() for t in ranked_texts}
+        for text in pool:
+            if len(ranked_texts) >= body.reply_count:
+                break
+            if text.lower() not in seen:
+                ranked.append(
+                    {
+                        "reply": text,
+                        "score": 6,
+                        "metrics": {
+                            "naturalness": 7,
+                            "confidence": 6,
+                            "tone_match": 6,
+                            "respectfulness": 8,
+                        },
+                        "explanation": "Additional option.",
+                    }
+                )
+                ranked_texts.append(text)
+                seen.add(text.lower())
+    ranked = ranked[: body.reply_count]
 
     # ── Step 4: Build structured reply items ─────────────────────────────
     reply_items: list[RankedReplyItem] = []

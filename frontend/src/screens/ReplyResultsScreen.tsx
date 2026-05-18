@@ -1,26 +1,36 @@
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as Clipboard from 'expo-clipboard';
 import { LinearGradient } from 'expo-linear-gradient';
+import { MotiView } from 'moti';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, {
   interpolate,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 
-import { FloatingCard, GlassCard, GradientButton } from '../components/ui';
+import { AmbientOrbsBackground, FloatingCard, GlassCard, GradientButton } from '../components/ui';
+import { motionSpring, staggerMs } from '../theme/motion';
 import { premiumTheme } from '../theme/premium';
-import { RootStackParamList } from '../types/navigation';
+import { ConfidenceLevel, RootStackParamList } from '../types/navigation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ReplyResults'>;
 const LABELS = ['smooth', 'playful', 'bold'] as const;
+
+function confidenceLabel(c: ConfidenceLevel | undefined): string | null {
+  if (!c) return null;
+  if (c === 'low') return 'Soft';
+  if (c === 'high') return 'Bold';
+  return 'Balanced';
+}
 
 export function ReplyResultsScreen({ route, navigation }: Props) {
   const {
     prompt,
     tone,
+    confidenceLevel,
     suggestions,
     retrievalDebug,
     explainabilityMode,
@@ -36,7 +46,7 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
   const expandProgress = useSharedValue(0);
 
   useEffect(() => {
-    expandProgress.value = withTiming(showWhy ? 1 : 0, { duration: 250 });
+    expandProgress.value = withSpring(showWhy ? 1 : 0, { damping: 22, stiffness: 200 });
   }, [showWhy, expandProgress]);
 
   const chevronStyle = useAnimatedStyle(() => ({
@@ -53,6 +63,8 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
     return showAllDebug ? retrievalDebug : retrievalDebug.slice(0, 3);
   }, [retrievalDebug, showAllDebug]);
 
+  const confDisplay = confidenceLabel(confidenceLevel);
+
   async function copyText(text: string) {
     await Clipboard.setStringAsync(text);
     setCopyToast('Reply copied');
@@ -60,15 +72,23 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
   }
 
   return (
-    <LinearGradient colors={premiumTheme.gradients.hero} style={styles.screen}>
+    <View style={styles.screen}>
+      <LinearGradient colors={premiumTheme.gradients.romantic} style={StyleSheet.absoluteFill} />
+      <AmbientOrbsBackground />
+      <LinearGradient colors={['transparent', 'rgba(15,23,42,0.55)']} style={StyleSheet.absoluteFill} />
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.sectionTitle}>Original Prompt</Text>
         <View style={styles.card}>
           <Text style={styles.promptText}>{prompt}</Text>
-          <Text style={styles.toneText}>Tone: {tone}</Text>
+          <Text style={styles.toneText}>
+            Tone: {tone}
+            {confDisplay ? ` · Confidence: ${confDisplay}` : ''}
+          </Text>
         </View>
 
-        <Text style={styles.sectionTitle}>Swipe Replies</Text>
+        <Text style={styles.sectionTitle}>
+          Pick a reply{suggestions.length > 1 ? ` · ${suggestions.length} options` : ''}
+        </Text>
         <Animated.ScrollView
           horizontal
           pagingEnabled
@@ -82,7 +102,11 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
             const score = suggestion.score ?? Math.max(7, 9 - (index % 3));
 
             return (
-              <FloatingCard key={`${index}-${suggestion}`} style={[styles.replyCardWrap, { width: pageWidth }]}>
+              <FloatingCard
+                key={`${index}-${suggestion.text}`}
+                enterDelay={index * staggerMs}
+                style={[styles.replyCardWrap, { width: pageWidth }]}
+              >
                 <View style={styles.replyCard}>
                   <View style={styles.replyTopRow}>
                     <Text style={styles.labelPill}>{label}</Text>
@@ -125,7 +149,13 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
             <Animated.View style={[styles.expandWrap, debugBodyStyle]}>
               <View style={styles.debugList}>
                 {visibleDebugItems.map((item, index) => (
-                  <View key={`${item.pattern_id ?? 'pattern'}-${index}`} style={styles.debugItem}>
+                  <MotiView
+                    key={`${item.pattern_id ?? 'pattern'}-${index}`}
+                    from={{ opacity: 0, translateX: -10 }}
+                    animate={{ opacity: 1, translateX: 0 }}
+                    transition={{ ...motionSpring.gentle, delay: index * staggerMs }}
+                    style={styles.debugItem}
+                  >
                     <Text style={styles.debugMetaTitle}>
                       Pattern: {(item.pattern_id ?? 'N/A').toUpperCase()}   •   Tone:{' '}
                       {item.tone ?? 'unknown'}
@@ -142,7 +172,7 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
                     <Text style={styles.debugLine}>
                       Reason: {item.reason ?? 'No ranking reason provided.'}
                     </Text>
-                  </View>
+                  </MotiView>
                 ))}
               </View>
               {retrievalDebug.length > 3 ? (
@@ -161,8 +191,8 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
 
         <GradientButton
           style={styles.button}
-          label="Try Another Prompt"
-          onPress={() => navigation.navigate('ChatInput')}
+          label="New tone & conversation"
+          onPress={() => navigation.navigate('ReplySetup')}
         />
 
         {copyToast ? (
@@ -171,7 +201,7 @@ export function ReplyResultsScreen({ route, navigation }: Props) {
           </View>
         ) : null}
       </ScrollView>
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -208,8 +238,8 @@ const styles = StyleSheet.create({
   replyCard: {
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(167, 139, 250, 0.3)',
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderColor: 'rgba(244, 114, 182, 0.22)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     padding: 18,
     minHeight: 200,
     justifyContent: 'space-between',
@@ -224,8 +254,10 @@ const styles = StyleSheet.create({
   labelPill: {
     borderRadius: 999,
     overflow: 'hidden',
-    backgroundColor: 'rgba(124,58,237,0.35)',
-    color: '#f1f5f9',
+    backgroundColor: 'rgba(244,114,182,0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(251,182,193,0.45)',
+    color: '#fff1f2',
     paddingHorizontal: 10,
     paddingVertical: 5,
     textTransform: 'capitalize',

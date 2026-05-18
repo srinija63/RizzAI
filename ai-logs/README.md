@@ -18,6 +18,14 @@ Suggested naming:
 - Export and save after each meaningful build session (or at least daily).
 - Keep older exports — do not overwrite.
 
+### Session summaries in this repo
+
+| File | Date | Topics |
+|------|------|--------|
+| `cursor-chat-2026-05-04.txt` | 2026-05-04 | Early build |
+| `cursor-chat-2026-05-05-continuation.txt` | 2026-05-05 | Analyzer, RAG, diversity, multi-provider |
+| `cursor-chat-2026-05-15.txt` | 2026-05-15 | UI/Stitch, 3 replies, openers/bio grounding, embedding singleton, git |
+
 ### Git workflow (after exporting into `ai-logs/`)
 
 ```bash

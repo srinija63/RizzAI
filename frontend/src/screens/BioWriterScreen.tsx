@@ -50,7 +50,7 @@ export function BioWriterScreen({ navigation }: Props) {
       const { bios, providerUsed } = await fetchBioVariants(about.trim(), style, 3);
       navigation.navigate('TextResults', {
         title: 'Bio ideas',
-        subtitle: `Style: ${STYLE_LABELS[style]}`,
+        subtitle: `Style: ${STYLE_LABELS[style]} · from your notes`,
         items: bios,
         providerUsed,
       });
@@ -71,7 +71,8 @@ export function BioWriterScreen({ navigation }: Props) {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.heading}>Bio writer</Text>
         <Text style={styles.helper}>
-          Drop messy notes or bullet facts, pick a style — get paste-ready profile bios.
+          Drop messy notes or bullet facts — pick a style. Each bio will use specifics from what you
+          write (hobbies, job, vibe, goals), not generic filler.
         </Text>
 
         <Text style={styles.label}>About you (rough draft)</Text>

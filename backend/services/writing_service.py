@@ -28,6 +28,30 @@ _OPENER_ANGLES = (
     "hypothesis — playful guess based on one profile detail",
 )
 
+_BIO_ANGLES = (
+    "punchy hook — lead with their strongest specific detail from the notes",
+    "mini-story — one short vignette built around a fact they gave",
+    "contrast line — personality quirk + what they want (from their notes)",
+    "warm direct — sincere line that names an interest or value they listed",
+    "playful list — 2–3 real hobbies/facts from notes, light tone",
+)
+
+_GENERIC_BIO_MARKERS = (
+    "partner in crime",
+    "love to laugh",
+    "here for a good time",
+    "go with the flow",
+    "don't be shy",
+    "looking for my person",
+    "good vibes only",
+    "work hard play hard",
+    "fluent in sarcasm",
+    "adventure and tacos",
+    "[your",
+    "[interest]",
+    "[detail]",
+)
+
 _GENERIC_OPENER_MARKERS = (
     "what are you up to",
     "how's your day",
@@ -102,12 +126,12 @@ def _clean_line(s: str) -> str:
     return re.sub(r"^[-*\d.)\s]+", "", s).strip().strip('"')
 
 
-def _profile_cues(profile: str) -> list[str]:
-    """Pull concrete hooks from profile text for grounding and validation."""
+def _input_cues(text: str) -> list[str]:
+    """Pull concrete hooks from user notes or profile text for grounding and validation."""
     cues: list[str] = []
     seen: set[str] = set()
 
-    for line in re.split(r"[\n•]+", profile):
+    for line in re.split(r"[\n•]+", text):
         chunk = line.strip().strip("-").strip()
         if len(chunk) < 4:
             continue
@@ -117,7 +141,7 @@ def _profile_cues(profile: str) -> list[str]:
         seen.add(key)
         cues.append(chunk[:120])
 
-    words = re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", profile.lower())
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", text.lower())
     for w in words:
         if w in _STOPWORDS or w in seen:
             continue
@@ -129,12 +153,20 @@ def _profile_cues(profile: str) -> list[str]:
     return cues[:10]
 
 
-def _profile_tokens(profile: str) -> set[str]:
+def _profile_cues(profile: str) -> list[str]:
+    return _input_cues(profile)
+
+
+def _input_tokens(text: str) -> set[str]:
     return {
         w.lower()
-        for w in re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", profile)
+        for w in re.findall(r"[a-zA-Z][a-zA-Z0-9'-]{3,}", text)
         if w.lower() not in _STOPWORDS
     }
+
+
+def _profile_tokens(profile: str) -> set[str]:
+    return _input_tokens(profile)
 
 
 def _opener_uses_profile(opener: str, profile: str, cues: list[str]) -> bool:
@@ -254,40 +286,155 @@ def generate_openers(*, profile_description: str, tone: str, count: int) -> tupl
     return _mock_openers(profile, selected_tone, n), "mock"
 
 
-def _mock_bios(style: str, n: int) -> list[str]:
-    tag = style.replace("_", " ")
-    pool = [
-        f"{tag.title()} take: I like good coffee, better playlists, and people who mean what they say.",
-        f"{tag.title()} take: Here for real chemistry, not performance. Building habits that stick.",
-        f"{tag.title()} take: Good food, bad puns, great playlists. You bring the weekend plan.",
-    ]
-    k = max(1, min(5, n))
-    return [pool[i % len(pool)] for i in range(k)]
+def _is_generic_bio(bio: str) -> bool:
+    t = bio.lower()
+    return any(m in t for m in _GENERIC_BIO_MARKERS)
+
+
+def _bio_uses_input(bio: str, about: str, cues: list[str]) -> bool:
+    text = bio.lower()
+    if _is_generic_bio(bio):
+        return False
+    about_tokens = _input_tokens(about)
+    bio_tokens = _input_tokens(bio)
+    if about_tokens & bio_tokens:
+        return True
+    return any(cue.lower() in text for cue in cues if len(cue) >= 4)
+
+
+def _grounded_bio_count(bios: list[str], about: str, cues: list[str]) -> int:
+    return sum(1 for b in bios if _bio_uses_input(b, about, cues))
+
+
+def _dedupe_bios(bios: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for bio in bios:
+        cleaned = bio.strip()
+        if not cleaned:
+            continue
+        key = re.sub(r"\s+", " ", cleaned.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(cleaned)
+    return unique
+
+
+def _mock_bios(about_text: str, style: str, n: int) -> list[str]:
+    cues = _input_cues(about_text)
+    c1 = cues[0] if cues else "what I actually do on weekends"
+    c2 = cues[1] if len(cues) > 1 else c1
+    c3 = cues[2] if len(cues) > 2 else c1
+    style_l = style.lower()
+    templates: dict[str, list[str]] = {
+        "witty_minimal": [
+            f"{c1} is my entire personality (no notes).\nLooking for someone who gets the bit.",
+            f"Professional overthinker. Side quest: {c2}.\nWill trade good recs for better conversation.",
+        ],
+        "warm_story": [
+            f"Still thinking about {c1} — it says a lot about me.\nHere for slow chats and real plans.",
+            f"I care about {c2} more than I should admit.\nWarm energy, low drama, good coffee.",
+        ],
+        "bold_confident": [
+            f"I do {c1} on purpose.\nIf that aligns with you, say hi — I prefer clear over vague.",
+            f"Into {c2} and people who mean what they type.\nLet's skip small talk when it makes sense.",
+        ],
+        "playful": [
+            f"Ranking: {c1}, {c2}, and finding someone who laughs at my bad jokes.",
+            f"Certified fan of {c3}.\nBonus points if you have a take I haven't heard.",
+        ],
+        "authentic_soft": [
+            f"{c1} matters to me — it's the honest version of who I am.\nLooking for kindness and curiosity.",
+            f"Trying to be upfront: I love {c2}, I'm working on {c3}, and I like people who are real.",
+        ],
+    }
+    pool = templates.get(style_l, templates["authentic_soft"])
+    out: list[str] = []
+    for i in range(max(1, min(5, n))):
+        out.append(pool[i % len(pool)])
+    return _dedupe_bios(out)[:n]
+
+
+def _finalize_bios(
+    bios: list[str],
+    about: str,
+    *,
+    count: int,
+    style: str,
+) -> list[str]:
+    cues = _input_cues(about)
+    cleaned = [b for b in bios if b.strip() and not _is_generic_bio(b)]
+    unique = _dedupe_bios(cleaned)
+    if len(unique) < count:
+        unique = _mock_bios(about, style, count)
+    if _grounded_bio_count(unique, about, cues) < max(1, count // 2):
+        return _mock_bios(about, style, count)[:count]
+    return unique[:count]
+
+
+def _build_bio_prompt(*, about_text: str, style_template: str, count: int) -> str:
+    n = max(1, min(5, int(count)))
+    guide = BIO_STYLE_GUIDE.get(style_template, BIO_STYLE_GUIDE["authentic_soft"])
+    cues = _input_cues(about_text)
+    cues_block = "\n".join(f"  - {c}" for c in cues[:8]) if cues else "  - (use specifics from the notes below)"
+    angle_lines = "\n".join(
+        f"  - Bio {i + 1}: {_BIO_ANGLES[i % len(_BIO_ANGLES)]}" for i in range(n)
+    )
+    return (
+        "You are CharmAI, helping write dating app bios.\n\n"
+        f"USER notes / facts / voice (this is the person writing their OWN bio — use their details):\n"
+        f"{about_text.strip()}\n\n"
+        f"Hooks from their notes (each bio must use at least one):\n{cues_block}\n\n"
+        f"User-selected style ONLY (do not change): {style_template}\n"
+        f"Style guide: {guide}\n\n"
+        "Task:\n"
+        f"- Produce exactly {n} complete bio variants they can paste into a dating profile.\n"
+        "- EVERY bio must include at least one specific detail from THEIR notes above "
+        "(job, hobby, city, food, humor, values, pets, music, goals, etc.).\n"
+        "- Do NOT write generic bios that could fit anyone.\n"
+        "- Do NOT use placeholders like [interest] or [your job] — use their actual words.\n"
+        "- Each variant must differ in structure and opening hook.\n"
+        "- No hashtags unless the user used them; no cringe; no explicit content.\n"
+        "- Length: roughly 2–5 short lines per bio (line breaks OK).\n"
+        "Required angles (one per bio):\n"
+        f"{angle_lines}\n\n"
+        f'Return ONLY valid JSON: {{"bios":["...","..."]}} with exactly {n} strings. '
+        "No markdown, no commentary."
+    )
 
 
 def generate_bios(*, about_text: str, style_template: str, variant_count: int) -> tuple[list[str], str]:
+    about = about_text.strip()
+    style = (style_template or "").strip().lower()
+    if style not in BIO_STYLE_GUIDE:
+        raise ValueError(
+            "style_template is required — choose witty_minimal, warm_story, bold_confident, playful, or authentic_soft."
+        )
+
     n = max(1, min(5, int(variant_count)))
-    guide = BIO_STYLE_GUIDE.get(style_template, BIO_STYLE_GUIDE["authentic_soft"])
-    prompt = (
-        "You are CharmAI, helping write dating app bios.\n\n"
-        f"Rough notes / facts / voice from the user:\n{about_text.strip()}\n\n"
-        f"Style template: {style_template}\n"
-        f"Style guide: {guide}\n\n"
-        "Task:\n"
-        f"- Produce exactly {n} complete bio variants the user can paste into a dating profile.\n"
-        "- Each variant should be meaningfully different in structure and hook.\n"
-        "- No hashtags unless the user used them; no cringe; no explicit content; no negativity about others.\n"
-        "- Length: roughly 2–5 short lines per bio (plain text with line breaks OK).\n\n"
-        f'Return ONLY valid JSON: {{"bios": ["...","..."]}} with exactly {n} strings. No markdown, no commentary.'
-    )
+    prompt = _build_bio_prompt(about_text=about, style_template=style, count=n)
+
     try:
-        raw = generate_text(prompt, max_tokens=900)
+        raw = generate_text(prompt, max_tokens=1200)
         items = _parse_json_list(raw, "bios", max_items=n)
-        if len(items) >= 1:
-            while len(items) < n:
-                items.append(items[-1])
-            return items[:n], get_last_provider_name()
+        if items:
+            finalized = _finalize_bios(items, about, count=n, style=style)
+            if _grounded_bio_count(finalized, about, _input_cues(about)) >= max(1, n // 2):
+                return finalized[:n], get_last_provider_name()
+
+            retry_prompt = (
+                f"{prompt}\n\n"
+                "RETRY — previous bios were too generic or ignored the user's notes. "
+                f"Write exactly {n} bios. Each MUST include specific details from the notes above "
+                "(interests, job, places, personality, goals). "
+                "Forbidden: clichés, placeholders, bios that could apply to anyone."
+            )
+            retry_raw = generate_text(retry_prompt, max_tokens=1200)
+            retry_items = _parse_json_list(retry_raw, "bios", max_items=n)
+            if retry_items:
+                return _finalize_bios(retry_items, about, count=n, style=style)[:n], get_last_provider_name()
     except Exception as exc:  # noqa: BLE001
         logger.info("[bio] LLM failed: %s", exc)
 
-    return _mock_bios(style_template, n), "mock"
+    return _mock_bios(about, style, n), "mock"

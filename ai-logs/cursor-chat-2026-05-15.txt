@@ -1,0 +1,79 @@
+Cursor Chat Session Log
+Date: 2026-05-15
+Project: RizzAI (CharmAI)
+
+Summary:
+Continued from prior session (see cursor-chat-2026-05-05-continuation.txt). Focus on UI polish,
+reply/openers/bio quality, Stitch branding, performance, docs, and git.
+
+---
+
+## User requests & outcomes
+
+### Reply coaching
+- User picks tone + confidence manually (no auto-selection on Reply Setup).
+- Default reply count changed to **3** unique options (frontend + backend schema).
+- Fixed duplicate / too-few replies: varied padding, dedupe in ranking backfill, client dedupe.
+- LLM chain: Gemini → Ollama → mock (OpenAI removed from active chain).
+- JSON reply parsing hardened (strip ```json fences, parse replies array).
+- User confirmed GEMINI_API_KEY already in backend/.env — slowness was multi-step pipeline, not missing key.
+
+### Performance (backend)
+- **Embedding singleton**: load sentence-transformers once, reuse for RAG (was reloading every request).
+- **PRELOAD_EMBEDDINGS** at server startup (config default true).
+- **SKIP_LLM_ANALYZE** on POST /api/reply — fast keyword/rule analyze; saves one Gemini call (tone still user-chosen).
+- Documented in README troubleshooting.
+
+### Opener generator
+- Tone picker required (Spark persona UI, no default flirty).
+- Openers must reference **their profile** — prompt hooks, validation, retry, mock uses profile cues.
+- Stitch fetch scripts for logo/splash screen IDs.
+
+### Bio writer
+- Style template UI aligned with Reply/Opener (BioStylePersonaPicker grid).
+- No auto-selected style; generate disabled until style chosen.
+- Bios must reference **user's about_text** — hooks, validation, retry, style-specific mock templates (2026-05-15 update).
+
+### UI / branding
+- Hero intro: vibrant splash (magenta/cyan), rizzAI wordmark, Get Started, no login.
+- Logo from Stitch project 17404370540113652731 → assets/rizz-logo.png.
+- Home: tile layout (reply / openers / bio), wireframe heart logo in header.
+- NativeWind/Tamagui/Moti components; AmbientOrbsBackground, etc.
+
+### Stitch / assets
+- Project ID: 17404370540113652731
+- Screens: abstract logo 048c3380cc92497c9042574ba7528e95, vibrant splash 4ce103cb2c2c4a209198af8b828a37d1
+- fetch-stitch-via-api.ps1 (HTTP MCP) when stitch-mcp CLI fails on Windows
+
+### Docs & git
+- README rewritten (features, API, env, Stitch, troubleshooting).
+- Git commit 55729fe: full CharmAI UI + writing tools + faster pipeline.
+- .gitignore: .expo, stitch temp JSON, backend/.env excluded.
+
+---
+
+## Files touched (high level)
+
+Backend:
+- services/writing_service.py (openers + bios grounded)
+- services/embeddings.py, config.py, main.py (singleton + preload)
+- services/analyzer_service.py, routes/chat.py (fast analyze)
+- services/llm_service.py, rizz_service.py, ranking_service.py, routes/chat.py (replies)
+- schemas.py, .env.example
+
+Frontend:
+- screens: HeroIntro, Home, ReplySetup, ChatInput, ReplyResults, OpenerGenerator, BioWriter, TextResults
+- components: SparkTonePersonaPicker, BioStylePersonaPicker, RizzWireframeHeartIcon, animated-shader-hero
+- services/api.ts
+
+---
+
+## Pending / user actions
+- Rotate Gemini/Stitch API keys if exposed in chat.
+- Run: uvicorn + npx expo start -c after .env changes.
+- Optional: python scripts/ingest.py for RAG quality.
+- git push origin main (4+ commits ahead of remote after 2026-05-15 work).
+
+---
+
+Note: Raw Cursor export can be appended alongside this summary per ai-logs/README.md.

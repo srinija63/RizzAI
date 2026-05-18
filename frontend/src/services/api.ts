@@ -339,7 +339,16 @@ export async function fetchBioVariants(
       throw new ApiClientError('Could not generate bios', 'BAD_RESPONSE');
     }
     const data = (await response.json()) as BioApiResponse;
-    const bios = (data.bios ?? []).map((s) => s.trim()).filter(Boolean);
+    const seen = new Set<string>();
+    const bios: string[] = [];
+    for (const raw of data.bios ?? []) {
+      const text = raw.trim();
+      if (!text) continue;
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      bios.push(text);
+    }
     if (!bios.length) {
       throw new ApiClientError('No bios returned', 'EMPTY_RESPONSE');
     }
